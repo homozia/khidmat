@@ -18,8 +18,8 @@ else
 fi
 
 npm ci
-npm run db:migrate
-npm run db:seed
+# Applies new migrations; loads demo data only into an empty database. Existing test data is kept.
+npm run db:init
 echo
 echo "Setup complete. Start the API with:   npm run dev"
 echo "Serve the web app to phones with:     npm run serve:web"

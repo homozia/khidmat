@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
+import { initDatabase } from '../src/setup.ts';
+import { resetSchema } from '../src/migrate.ts';
 import { bookAndAssign, freshApp, idem, loginAll, pool, tomorrowAt, JOB, LOCALITY, PROVIDER, type Users } from './helpers.ts';
 
 /* Regression tests for the M4.1 audit (docs/milestones/m41-audit-closure.md). */
@@ -65,5 +67,40 @@ describe('D1 lockout authorization: no work and no billing without a verified ch
     await arrive(id);
     expect((await u.dispatcher.post(`/v1/admin/bookings/${id}/visit-charge`, { reason: 'customer_absent', note: 'Waited 20 minutes' })).status).toBe(200);
     expect((await u.locksmithPending.post(`/v1/provider/bookings/${id}/complete`, { cash_collected_paisa: 500_00 }, idem())).status).toBe(200);
+  });
+});
+
+describe('D3 setup is safe to re-run', () => {
+  let app: FastifyInstance; let u: Users;
+  const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(200, 1)]);
+  const snapshot = async () => (await pool.query(`SELECT
+      (SELECT count(*) FROM app.bookings)::int AS bookings, (SELECT count(*) FROM app.attachments)::int AS attachments,
+      (SELECT count(*) FROM app.refunds)::int AS refunds, (SELECT count(*) FROM app.ledger_entries)::int AS ledger,
+      (SELECT coalesce(sum(amount_paisa), 0)::int FROM app.ledger_entries) AS ledger_sum,
+      (SELECT count(*) FROM app.users)::int AS users, (SELECT count(*) FROM app.regions)::int AS regions`)).rows[0];
+  beforeAll(async () => { app = await freshApp(); u = await loginAll(app); });
+  afterAll(async () => { await app.close(); });
+
+  it('running init again keeps bookings, attachments, refunds and ledger entries', async () => {
+    const tap = { job_id: JOB('plumbing.tap_leak'), timing: 'scheduled', scheduled_start: tomorrowAt('10:00'), locality_id: LOCALITY.G10, address_line: 'House 12, G-10/2', intake: { taps: 2 } };
+    const id = await bookAndAssign(u, 'customerIsb', 'plumberIsb', tap);
+    await app.inject({ method: 'POST', url: `/v1/bookings/${id}/attachments?kind=photo&client_ref=keep-me-0001`, payload: JPEG,
+      headers: { authorization: `Bearer ${u.customerIsb.token}`, 'content-type': 'image/jpeg' } });
+    for (const to of ['en_route', 'on_site', 'in_progress']) await u.plumberIsb.post(`/v1/provider/bookings/${id}/status`, { to });
+    await u.plumberIsb.post(`/v1/provider/bookings/${id}/complete`, { cash_collected_paisa: 1200_00 }, idem());
+    await u.finance.post(`/v1/admin/bookings/${id}/refunds`, { charge_type: 'labour', amount_paisa: 100_00, reason: 'Goodwill' }, idem());
+    const before = await snapshot();
+    expect(before).toMatchObject({ bookings: 1, attachments: 1, refunds: 1 });
+    expect(before.ledger).toBeGreaterThan(0);
+    for (let i = 0; i < 2; i++) expect(await initDatabase(pool)).toEqual({ applied: [], seeded: false });
+    expect(await snapshot()).toEqual(before);
+  });
+
+  it('a fresh, empty database gets the structure and the synthetic data', async () => {
+    await resetSchema(pool, 'test');
+    const r = await initDatabase(pool);
+    expect(r.seeded).toBe(true);
+    expect(r.applied.length).toBeGreaterThanOrEqual(5);
+    expect(await snapshot()).toMatchObject({ bookings: 0, users: 12 });
   });
 });

@@ -12,7 +12,7 @@
   "scripts": {
     "db:migrate": "npm run migrate -w apps/api",
     "db:seed": "npm run seed -w apps/api",
-    "db:reset": "npm run reset -w apps/api",
+    "db:reset": "npm run reset -w apps/api --",
     "dev": "npm run dev -w apps/api",
     "lint": "eslint .",
     "typecheck": "npm run typecheck -w apps/api && npm run typecheck -w apps/web && npm run typecheck -w apps/mobile",
@@ -24,7 +24,8 @@
     "setup": "bash scripts/setup.sh",
     "serve:web": "npm run build -w apps/web && npm run preview -w apps/web",
     "lan:ip": "node scripts/lan-ip.mjs",
-    "apk:fieldtest": "npm run apk:fieldtest -w apps/mobile"
+    "apk:fieldtest": "npm run apk:fieldtest -w apps/mobile",
+    "db:init": "npm run init -w apps/api"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

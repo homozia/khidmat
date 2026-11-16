@@ -9,7 +9,8 @@
     "seed": "node --env-file-if-exists=../../.env scripts/seed.ts",
     "reset": "node --env-file-if-exists=../../.env scripts/reset.ts",
     "typecheck": "tsc --noEmit -p .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "init": "node --env-file-if-exists=../../.env scripts/init.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1169.0",
