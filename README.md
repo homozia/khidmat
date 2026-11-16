@@ -8,47 +8,28 @@
 | Customer app (Expo, Android first) | `apps/mobile` | customers |
 | Provider portal + operations dashboard (React web) | `apps/web` | providers on their phones; dispatch, finance, verification and setup staff |
 
-Status: **Milestones 1–3 complete in local/sandbox form** (see `docs/milestones/`).
+Status: **Milestone 4 (audit corrections and field-test build)**. See `docs/milestones/m4-audit-closure.md`.
 All places, zone boundaries, prices and people in the seed are **synthetic demo data**.
 
 ## Requirements
 
 - Node.js 22.18 or newer (TypeScript runs natively; no build step)
-- PostgreSQL 16 with PostGIS 3 and pgcrypto
+- Docker, for the PostgreSQL 16 + PostGIS 3.4 container. Without Docker, use your own PostgreSQL 16 with PostGIS 3 and pgcrypto, and the same databases as `scripts/db-init.sql`.
 
-## Database setup (once, as a PostgreSQL superuser)
-
-```sql
-CREATE ROLE khidmat LOGIN PASSWORD 'khidmat_dev' CREATEDB;
-CREATE DATABASE khidmat_dev OWNER khidmat;
-CREATE DATABASE khidmat_test OWNER khidmat;
--- in EACH of the two databases:
-CREATE EXTENSION IF NOT EXISTS postgis;
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
-```
-
-On Debian/Ubuntu: `apt-get install postgresql-16 postgresql-16-postgis-3`, then run the SQL above with
-`sudo -u postgres psql`.
-
-## Run the seeded demo
+## Quick start (laptop test server)
 
 ```bash
-cp .env.example .env      # local settings; never commit .env
-npm ci
-npm run db:reset          # drop, migrate and seed the dev database (refused unless APP_ENV is development/test)
-npm run dev               # API on http://localhost:3000
+npm run setup        # .env from .env.example, database container, npm ci, migrate, seed
+npm run dev          # API on http://0.0.0.0:3000 (reachable from phones on the same Wi-Fi)
+npm run serve:web    # provider portal + operations at http://<laptop-ip>:5173 (proxies the API)
+npm run lan:ip       # prints the laptop address and the exact URLs for phones
 ```
 
-In two more terminals:
+`npm run db:reset` drops, migrates and seeds again. It only works on databases named `*_dev`, `*_test` or `*_sandbox`.
 
-```bash
-npm run dev:web                 # provider portal + operations at http://localhost:5173
-cd apps/mobile && EXPO_PUBLIC_API_URL=http://<your-computer-ip>:3000 npx expo start   # customer app
-```
+**Customer app on a phone:** install the signed field-test APK (**Khidmat TEST**), tap **Test server** on the sign-in screen, and enter the laptop address. See `docs/testing/phone-test-guide.md`. The Android emulator's `10.0.2.2` and the phone's `localhost` do not reach the laptop from a real phone.
 
-The customer app uses native modules (location, camera, microphone, secure storage), so on a phone it
-runs in a development build (`npx expo run:android` with Android Studio, or `eas build --profile development`),
-not in Expo Go. The Android emulator reaches your computer at `http://10.0.2.2:3000`, which is the default.
+**Customer app in development:** `cd apps/mobile && npx expo start` (development build). Build variants and signing are covered in `docs/operations/android-builds.md`.
 
 Sign in with any demo phone below; the sandbox SMS accepts the code **123456** and sends nothing.
 
@@ -88,7 +69,11 @@ is scripted in `apps/api/test/flow-plumbing.test.ts`, which is the most readable
 
 | Command | What it does |
 | --- | --- |
-| `npm run verify` | Lint + type check (all apps) + API tests + web build (what CI runs) |
+| `npm run setup` | One-time local stack setup (see Quick start) |
+| `npm run verify` | Lint + type check (all apps) + API tests + web build (what CI runs, plus the Android bundle) |
+| `npm run serve:web` | Build the web app and serve it on port 5173 to the LAN, proxying /v1 to the API |
+| `npm run lan:ip` | Show the laptop's Wi-Fi address and the URLs testers use |
+| `npm run apk:fieldtest` | Local Gradle build of the signed field-test APK (needs the Android SDK and signing variables) |
 | `npm run build:android-bundle` | Compile the customer app's Android JavaScript bundle |
 | `npm test` | Tests only (uses `khidmat_test`, resets it per file) |
 | `npm run db:migrate` | Apply new migrations to the dev database |
@@ -105,13 +90,18 @@ apps/api/
   src/domain/states.ts  booking state machine
   src/seed/           deterministic demo data (11 categories, 51 jobs, 4 zones, 12 people)
   test/               API integration tests against real PostgreSQL + PostGIS
+apps/mobile/app.config.ts   build variants (fieldtest / staging / production)
+.github/workflows/    ci.yml (lint, types, PostGIS tests, builds) and android-apk.yml (signed field-test APK)
+docs/testing/         Phone Test Guide
+docs/operations/      Android builds and signing; live SMS, storage, maps and staging (owner inputs)
 docs/                 API, data model, operator guide, milestone reports
 ```
 
 ## Verified, sandbox, and owner actions
 
-- **Verified here (automated):** everything listed in `docs/milestones/m1-m2-report.md`.
+- **Verified here (automated):** 131 API/database tests, lint, types, web build and Android bundle (`docs/milestones/m4-audit-closure.md`).
 - **Sandbox only:** SMS (fixed code, refused when `APP_ENV=production`); demo zone boundaries
   (`is_demo`, ignored in production); demo prices (`pricing_rules.is_demo`).
-- **Needs owner approval/action:** SMS aggregator contract and sender ID; Google Maps billing key;
-  hosting; real zone boundaries checked on the ground; real prices; Play Store account; any live payment.
+- **Needs owner approval/action:** SMS aggregator contract and sender ID; private object storage;
+  Google Maps keys; HTTPS staging host; real zone boundaries checked on the ground; real prices;
+  Play Store account and upload key; any live payment. Details: `docs/operations/storage-and-sms.md`.
