@@ -9,6 +9,10 @@ The test stack runs with none of these. Each service is behind an adapter select
 | `SMS_PROVIDER` | `sandbox` (code `SANDBOX_OTP_CODE`, nothing sent) | `sandbox` with `SANDBOX_OTP_ALLOWLIST`, or `aggregator` | `aggregator` (sandbox refused) |
 | `SANDBOX_OTP_ALLOWLIST` | not needed | **required** with sandbox: comma-separated synthetic numbers; any other number gets `TEST_NUMBERS_ONLY` | must be empty |
 
+Sign-in code limits: 3 codes per 15 minutes per number with live SMS; 30 with sandbox codes (no SMS is sent, and testers switch accounts often).
+
+`TEST_FAULTS=1` (test stack only) enables the lost-reply test control. The API refuses to start with it on staging or production.
+
 Aggregator adapter (`apps/api/src/services/sms.ts`): it sends an HTTPS JSON POST `{to, from, text}` with a bearer API key, times out after `SMS_TIMEOUT_MS`, and maps the response to `SMS_AUTH_FAILED` (401/403), `SMS_UNAVAILABLE` (network, timeout, 5xx) or `SMS_FAILED`. If the chosen provider's API differs, change only `sendViaAggregator`.
 
 **Owner inputs:** the aggregator contract, API URL, API key, and a PTA-approved sender ID. See `docs/owner/sms-quote-request.md`.

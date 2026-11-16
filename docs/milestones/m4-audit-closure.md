@@ -1,5 +1,11 @@
 # M4 audit closure report
 
+> **Corrections found in M4.1** (see `m41-audit-closure.md`):
+> - F8b: completing a lockout straight from `on_site`, and lockouts booked before the flag existed, bypassed the occupancy check (fixed in D1).
+> - F12: `npm run setup` re-ran `db:seed`, which **reset** the database (fixed in D3).
+> - F2b: uploads that failed permanently were dropped silently (fixed in D4).
+> - `docs/api.md` was not updated in M4 (fixed in D5).
+
 **Scope:** corrections to `khidmat-m3.zip` requested in the M4 audit brief.
 **Source:** `khidmat-m4-source.zip`. The git history has three commits: the baseline, the backend fixes, and the apps, build and CI changes.
 **Date:** 16 November 2026

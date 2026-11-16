@@ -226,7 +226,7 @@ const ur: Record<string, string> = {
   'The test server is running but cannot reach its database.': 'ٹیسٹ سرور چل رہا ہے لیکن اپنے ڈیٹا بیس تک نہیں پہنچ پا رہا۔',
   'This booking already has the most files allowed. Remove this one.': 'اس بکنگ میں زیادہ سے زیادہ فائلیں پہلے سے ہیں۔ یہ فائل ہٹا دیں۔',
   'This booking is cancelled. You can book again from the home screen.': 'یہ بکنگ منسوخ ہو گئی ہے۔ آپ ہوم اسکرین سے دوبارہ بک کر سکتے ہیں۔',
-  'This booking is finished. You can rate the work or report a problem.': 'یہ بکنگ مکمل ہو گئی ہے۔ آپ کام کی درجہ بندی کر سکتے ہیں یا مسئلہ رپورٹ کر سکتے ہیں۔',
+  'This booking is finished. You can rate the work or make a complaint.': 'یہ بکنگ مکمل ہو گئی ہے۔ آپ کام کی درجہ بندی کر سکتے ہیں یا شکایت کر سکتے ہیں۔',
   'This file is empty. Replace it or remove it.': 'یہ فائل خالی ہے۔ اسے بدلیں یا ہٹا دیں۔',
   'This file is too large. Replace it with a smaller photo.': 'یہ فائل بہت بڑی ہے۔ چھوٹی تصویر سے بدلیں۔',
   'This file type cannot be sent. Replace it with a photo.': 'یہ فائل نہیں بھیجی جا سکتی۔ تصویر سے بدلیں۔',
@@ -252,6 +252,8 @@ const ur: Record<string, string> = {
   'Keep booking': 'بکنگ رہنے دیں',
   'Cancel this booking': 'یہ بکنگ منسوخ کریں',
   'from': 'از',
+  'Make a complaint': 'شکایت کریں',
+  'Your complaint': 'آپ کی شکایت',
 };
 
 const Ctx = createContext<{ lang: Lang; rtl: boolean; setLang: (l: Lang) => void; t: (s: string) => string }>({

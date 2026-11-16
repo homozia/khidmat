@@ -19,7 +19,7 @@ const NEXT_STEP: Record<string, string> = {
   awaiting_approval: 'Your provider sent a new price. Approve or decline it below.',
   in_progress: 'Work is in progress. Pay the provider in cash when it is finished.',
   completed: 'Check the receipt, then tap "I paid in cash".',
-  closed: 'This booking is finished. You can rate the work or report a problem.',
+  closed: 'This booking is finished. You can rate the work or make a complaint.',
   cancelled: 'This booking is cancelled. You can book again from the home screen.',
   no_provider: 'We could not find a provider for this time. Call us or choose another time.',
 };
@@ -114,7 +114,7 @@ export default function BookingScreen() {
       )}
 
       {(b.complaints ?? []).map((c: any) => (
-        <Card key={c.id}><T style={{ fontWeight: '600' }}>{t('Report a problem')}: {c.status.replace('_', ' ')}</T><T variant="muted">{c.description}</T>{c.resolution_note && <T>{c.resolution_note}</T>}</Card>
+        <Card key={c.id}><T style={{ fontWeight: '600' }}>{t('Your complaint')}: {c.status.replace('_', ' ')}</T><T variant="muted">{c.description}</T>{c.resolution_note && <T>{c.resolution_note}</T>}</Card>
       ))}
       {!['requested'].includes(b.status) && !(b.complaints ?? []).some((c: any) => ['open', 'under_review'].includes(c.status)) && (
         complaint.open ? (
@@ -124,7 +124,7 @@ export default function BookingScreen() {
             <Input label={t('Details')} multiline value={complaint.text} onChangeText={(v) => setComplaint({ ...complaint, text: v })} />
             <Button title={t('Send complaint')} disabled={complaint.text.trim().length < 5} busy={busy} onPress={() => act(() => api('POST', `/v1/bookings/${id}/complaints`, { category: complaint.category, description: complaint.text.trim() }))} />
           </Card>
-        ) : <Button kind="link" title={t('Report a problem')} onPress={() => setComplaint({ ...complaint, open: true })} />
+        ) : <Button kind="link" title={t('Make a complaint')} onPress={() => setComplaint({ ...complaint, open: true })} />
       )}
 
       {canCancel && (cancelOpen ? (
