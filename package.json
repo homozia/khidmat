@@ -1,0 +1,30 @@
+{
+  "name": "khidmat",
+  "private": true,
+  "type": "module",
+  "description": "Local services marketplace for Islamabad and Rawalpindi (working name: Khidmat)",
+  "workspaces": [
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "db:migrate": "npm run migrate -w apps/api",
+    "db:seed": "npm run seed -w apps/api",
+    "db:reset": "npm run reset -w apps/api",
+    "dev": "npm run dev -w apps/api",
+    "lint": "eslint .",
+    "typecheck": "npm run typecheck -w apps/api && npm run typecheck -w apps/web && npm run typecheck -w apps/mobile",
+    "test": "npm test -w apps/api",
+    "verify": "npm run lint && npm run typecheck && npm test && npm run build:web",
+    "build:web": "npm run build -w apps/web",
+    "build:android-bundle": "npm run export:android -w apps/mobile",
+    "dev:web": "npm run dev -w apps/web"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint": "10.15.0",
+    "typescript-eslint": "8.72.2"
+  }
+}
