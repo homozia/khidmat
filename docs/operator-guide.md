@@ -1,37 +1,40 @@
-# Operator guide (pilot, Milestone 2 scope)
+# Operator guide (pilot)
 
-Until the admin web app ships (Milestone 3) these tasks run through the API (see `docs/api.md`).
+Staff work in the website at `http://<server>:5173`. Each person sees only the sections for their role. The test accounts are on the role card in `PHONE_TEST_CHECKLIST.md`.
 
-## Daily dispatch
+## Daily dispatch (dispatcher)
 
-1. Open the queue (`GET /v1/admin/dispatch/queue`). Oldest first; `needs_location_confirmation = true`
-   means the customer chose an area without a pin that straddles zones: call them, then
-   `confirm-location` with the right pin before offering.
-2. For each booking, list eligible providers. The list already excludes anyone without an approved,
-   unexpired skill, outside the zone (pickup and destination for drivers), busy at that time, at the
-   daily cap, or overdue on commission.
-3. Send an offer to the top provider. If it expires (10 minutes) or is declined, offer the next.
-   If nobody accepts within 30 minutes for a same-day job, call the customer and offer another slot.
+1. **Dispatch** lists waiting bookings, oldest first. If a booking is marked as needing pin confirmation, the customer chose an area that crosses zones. Call them, then **Confirm pin** before offering.
+2. Open a booking to see the eligible providers. Anyone is already left out who:
+   - has no approved, unexpired skill;
+   - does not cover the area (for drivers, both pickup and destination);
+   - is busy for the requested duration (an 8-hour driver booking blocks 8 hours);
+   - is at the daily cap or overdue on commission.
+3. **Send offer** to the top provider. Offers expire after 10 minutes. When a provider accepts, the server checks everything again. If something changed (licence expired, suspended, another job accepted meanwhile), the offer is withdrawn and the provider sees why. Offer the next one.
+4. If nobody can take it, use **No provider available**. The customer is told and can choose another time.
 
 ## Locksmith lockouts
 
-The customer must tick "I live here or am authorised". On site the locksmith checks photo ID against
-the address (utility bill, tenancy, or guard/neighbour confirmation) and records a photo before
-opening. If it cannot be verified, the locksmith stops and calls dispatch.
+- Before booking, the customer sees the occupancy-check rule and the visit charge (PKR 500 by default).
+- On site, the locksmith records how occupancy was checked: photo ID with this address, a utility bill, a tenancy agreement, or the guard or a neighbour. Work cannot start, and the job cannot be completed, until a **verified** check is recorded. This also applies to bookings made before M4.1.
+- If it cannot be verified, the locksmith records "Could not verify" and calls dispatch. Dispatch opens the booking, chooses **Occupancy could not be verified**, and bills the agreed visit charge. Nothing else can be billed, and the locksmith then completes the job for that amount.
+- The same visit-only charge can be used when the customer is absent or refuses access. It is only allowed when the service has a visit charge that the customer saw before booking.
 
-## Money
+## Money (finance)
 
-- The provider collects the full approved total in cash. The app refuses a different amount.
-- Commission (default 8% of retained labour) is posted automatically at completion, once.
-- Refunds: finance records the refunded amount against its charge type with a reason; the system
-  recomputes the commission and posts the difference. Materials and reimbursement refunds do not change it.
-- Every Monday, close last week (`statements/close` with that Monday's date). Statements are snapshots;
-  the ledger stays the source of truth.
-- Record each provider payment with its JazzCash/Easypaisa/bank reference. A reference can be used once.
-- Providers whose unpaid balance is over PKR 5,000, or who have charges older than 14 days still unpaid,
-  stop receiving offers until they settle.
+- The provider collects the full approved total in cash; any other amount is refused. The customer confirms the cash payment in the app, or it closes automatically after 72 hours.
+- Commission (default 8% of labour) is posted once, at completion. The provider sees the total, the amount the fee is charged on, the fee and their earnings.
+- **Refunds:** record the amount against its charge type with a reason. The commission is recalculated: labour refunds lower it; materials and reimbursements do not. When you pay the customer back, use **Mark paid** with the method and a reference (required). Until then, the receipt shows the refund as owed.
+- Every Monday, close last week's statements. Record each provider payment with its JazzCash, Easypaisa or bank reference; a reference can be used only once.
+- Providers who owe over PKR 5,000, or have charges older than 14 days, get no offers until they pay.
 
-## Changing the catalogue
+## Verification
 
-Create the job (it starts as a draft), enable it in the zones where it is offered, then set it active.
-Pausing a job hides it from new bookings only; existing bookings keep the terms they were booked on.
+Review uploaded documents (each view is logged), then approve skills. Restricted skills (driving, electrical, locks, solar) need an **accepted** document chosen as evidence and a future expiry date.
+
+## Setup (services, places, areas)
+
+- **Places:** add districts, cities and localities with Urdu names and Roman Urdu spellings; customers can search them at once.
+- **Service areas:** draw or import a zone, verify it on the ground, then activate it.
+- **Services and prices:** a new service starts as a draft. Edit its settings and customer questions (including choice questions), set a price, enable it in the zones where it is offered, then activate it. The customer app picks up all of this without an update.
+- Pausing a service hides it from new bookings only. Existing bookings keep the terms the customer accepted.
