@@ -19,6 +19,7 @@ jobs:
       DATABASE_URL: postgres://khidmat:khidmat_dev@localhost:5432/khidmat_test
       TEST_DATABASE_URL: postgres://khidmat:khidmat_dev@localhost:5432/khidmat_test
       APP_ENV: test
+      EXPO_PUBLIC_APP_VARIANT: development
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -26,7 +27,12 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
-      - run: npm test
+      - name: API and database tests
+        run: npm test -w apps/api
+      - name: Customer app logic against two real test servers
+        run: npm test -w apps/mobile
+      - name: Test environment script
+        run: node --test scripts/test-env.test.mjs
       - run: npm run build:web
       - name: Customer app JavaScript bundle (Android)
         run: npm run build:android-bundle

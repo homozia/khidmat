@@ -13,7 +13,7 @@ export default tseslint.config(
   },
   {
     files: ['apps/api/scripts/**', 'scripts/**'],
-    languageOptions: { globals: { console: 'readonly', process: 'readonly' } },
+    languageOptions: { globals: { console: 'readonly', process: 'readonly', fetch: 'readonly', AbortSignal: 'readonly', setTimeout: 'readonly' } },
     rules: { 'no-console': 'off' },
   },
   {

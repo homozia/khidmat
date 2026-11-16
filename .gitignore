@@ -3,3 +3,6 @@ dist/
 .env
 *.log
 uploads/
+
+# Local test environment state (process ids, logs)
+.khidmat/

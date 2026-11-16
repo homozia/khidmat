@@ -8,8 +8,8 @@ import type { ConfigContext, ExpoConfig } from 'expo/config';
  *   development (default) → Metro / Expo Go
  * Test, staging and production can be installed side by side because their package ids differ.
  */
-const VERSION = '0.4.0';
-const VERSION_CODE = Number(process.env.KHIDMAT_VERSION_CODE ?? 4);
+const VERSION = '0.4.1';
+const VERSION_CODE = Number(process.env.KHIDMAT_VERSION_CODE ?? 5);
 
 type Variant = 'development' | 'fieldtest' | 'staging' | 'production';
 const variant = (process.env.APP_VARIANT ?? 'development') as Variant;

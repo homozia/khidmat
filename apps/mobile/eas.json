@@ -3,7 +3,7 @@
   "build": {
     "fieldtest": {
       "distribution": "internal",
-      "env": { "APP_VARIANT": "fieldtest" },
+      "env": { "APP_VARIANT": "fieldtest", "EXPO_PUBLIC_APP_VARIANT": "fieldtest", "KHIDMAT_VERSION_CODE": "5" },
       "android": { "buildType": "apk", "gradleCommand": ":app:assembleRelease" }
     },
     "staging": {
