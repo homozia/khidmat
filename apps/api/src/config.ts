@@ -32,6 +32,8 @@ const schema = z.object({
   NO_PROVIDER_AFTER_MINUTES: z.coerce.number().int().positive().default(30),
   JOBS_INTERVAL_SECONDS: z.coerce.number().int().nonnegative().default(60),
   CORS_ORIGINS: z.string().default('http://localhost:5173'),
+  /** Test stack only: lets the field-test app ask the server to drop its reply after saving (see PHONE_TEST_CHECKLIST.md). */
+  TEST_FAULTS: z.enum(['0', '1']).default('0').transform((v) => v === '1'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
 });
 
@@ -58,6 +60,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     for (const k of ['FILE_SIGNING_SECRET', 'QUOTE_SIGNING_SECRET'] as const) {
       if (config[k].startsWith('dev-only')) throw new Error(`Set ${k} to a random value when APP_ENV=${config.APP_ENV}`);
     }
+  }
+  if (config.TEST_FAULTS && (config.APP_ENV === 'staging' || config.APP_ENV === 'production')) {
+    throw new Error(`TEST_FAULTS must be off when APP_ENV=${config.APP_ENV}`);
   }
   if (config.APP_ENV === 'production' && config.STORAGE_DRIVER === 'local') {
     throw new Error('Use private object storage (STORAGE_DRIVER=s3) in production');

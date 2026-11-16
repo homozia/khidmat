@@ -52,11 +52,24 @@ export async function buildApp(opts: BuildOptions = {}): Promise<FastifyInstance
   await app.register(cors, {
     origin: config.CORS_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean),
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-    allowedHeaders: ['authorization', 'content-type', 'idempotency-key'],
+    allowedHeaders: ['authorization', 'content-type', 'idempotency-key', 'x-khidmat-test-fault'],
     exposedHeaders: ['x-request-id'],
   });
   app.addHook('onSend', async (req, reply) => {
     reply.header('x-request-id', req.id).header('x-content-type-options', 'nosniff').header('referrer-policy', 'no-referrer');
+  });
+
+  // Test stack only (TEST_FAULTS=1, refused on staging and production): the field-test app can ask the server to
+  // save a booking or file normally and then drop the connection instead of replying, reproducing a reply lost
+  // after the database commit. The client must recover by retrying with the same Idempotency-Key / client_ref.
+  const FAULT_ROUTES = /^\/v1\/bookings(\/[0-9a-f-]{36}\/attachments)?(\?|$)/;
+  app.addHook('onSend', async (req, reply, payload) => {
+    if (config.TEST_FAULTS && req.method === 'POST' && req.headers['x-khidmat-test-fault'] === 'drop-reply'
+      && reply.statusCode < 400 && FAULT_ROUTES.test(req.url)) {
+      req.log.warn({ url: req.url }, 'test fault: reply dropped after commit');
+      req.raw.socket?.destroy();
+    }
+    return payload;
   });
 
   app.decorateRequest('user', null);
@@ -88,7 +101,7 @@ export async function buildApp(opts: BuildOptions = {}): Promise<FastifyInstance
 
   app.get('/health', async () => {
     await pool.query('SELECT 1');
-    return { ok: true, app: config.APP_NAME, env: config.APP_ENV, sandbox_sms: config.SMS_PROVIDER === 'sandbox' };
+    return { ok: true, app: config.APP_NAME, env: config.APP_ENV, sandbox_sms: config.SMS_PROVIDER === 'sandbox', test_faults: config.TEST_FAULTS };
   });
 
   // ---- Auth ----

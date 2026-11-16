@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { initDatabase } from '../src/setup.ts';
+import { config, loadConfig } from '../src/config.ts';
 import { resetSchema } from '../src/migrate.ts';
 import { bookAndAssign, freshApp, idem, loginAll, pool, tomorrowAt, JOB, LOCALITY, PROVIDER, type Users } from './helpers.ts';
 
@@ -102,5 +103,38 @@ describe('D3 setup is safe to re-run', () => {
     expect(r.seeded).toBe(true);
     expect(r.applied.length).toBeGreaterThanOrEqual(5);
     expect(await snapshot()).toMatchObject({ bookings: 0, users: 12 });
+  });
+});
+
+describe('Test-only lost-reply control', () => {
+  let app: FastifyInstance; let u: Users; let base: string;
+  beforeAll(async () => {
+    app = await freshApp(); u = await loginAll(app);
+    base = await app.listen({ port: 0, host: '127.0.0.1' });
+  });
+  afterAll(async () => { config.TEST_FAULTS = false; await app.close(); });
+
+  it('saves the booking, drops the reply, and the retry with the same key returns that booking', async () => {
+    config.TEST_FAULTS = true;
+    const body = { job_id: JOB('plumbing.tap_leak'), timing: 'scheduled', scheduled_start: tomorrowAt('10:00'), locality_id: LOCALITY.G10, address_line: 'House 12, G-10/2', intake: { taps: 1 } };
+    const prev = await u.customerIsb.post('/v1/bookings/preview', body);
+    const send = (fault: boolean) => fetch(`${base}/v1/bookings`, { method: 'POST', body: JSON.stringify({ ...body, price_token: prev.body.price_token }),
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${u.customerIsb.token}`, 'idempotency-key': 'lost-reply-0001', ...(fault && { 'x-khidmat-test-fault': 'drop-reply' }) } });
+    await expect(send(true)).rejects.toThrow();
+    const saved = await pool.query('SELECT ref FROM app.bookings');
+    expect(saved.rows).toHaveLength(1);
+    const retry = await send(false);
+    expect((await retry.json()).ref).toBe(saved.rows[0].ref);
+    expect((await pool.query('SELECT count(*)::int AS n FROM app.bookings')).rows[0].n).toBe(1);
+  });
+
+  it('is ignored when TEST_FAULTS is off, and refused on staging and production', async () => {
+    config.TEST_FAULTS = false;
+    const r = await fetch(`${base}/v1/bookings`, { method: 'POST', body: '{}', headers: { 'content-type': 'application/json', authorization: `Bearer ${u.customerIsb.token}`, 'idempotency-key': 'x-0000001', 'x-khidmat-test-fault': 'drop-reply' } });
+    expect(r.status).toBeGreaterThanOrEqual(400); // a normal reply arrives
+    for (const APP_ENV of ['staging', 'production']) {
+      expect(() => loadConfig({ ...process.env, APP_ENV, TEST_FAULTS: '1', SMS_PROVIDER: 'aggregator', SMS_API_URL: 'https://x', STORAGE_DRIVER: 's3', S3_ENDPOINT: 'https://s3', S3_BUCKET: 'b', S3_ACCESS_KEY_ID: 'a', S3_SECRET_ACCESS_KEY: 'b',
+        FILE_SIGNING_SECRET: 'f'.repeat(32), QUOTE_SIGNING_SECRET: 'q'.repeat(32), SANDBOX_OTP_ALLOWLIST: '' })).toThrow(/TEST_FAULTS/);
+    }
   });
 });
