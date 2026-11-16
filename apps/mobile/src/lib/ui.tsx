@@ -19,9 +19,9 @@ export function when(iso?: string | null) {
 }
 
 /** Direction-aware text and rows: Urdu reads right to left without restarting the app. */
-export function T({ children, style, variant = 'body', numberOfLines }: { children: ReactNode; style?: object; variant?: 'title' | 'h2' | 'body' | 'muted' | 'small'; numberOfLines?: number }) {
+export function T({ children, style, variant = 'body', numberOfLines, selectable }: { children: ReactNode; style?: object; variant?: 'title' | 'h2' | 'body' | 'muted' | 'small'; numberOfLines?: number; selectable?: boolean }) {
   const { rtl } = useI18n();
-  return <Text numberOfLines={numberOfLines} style={[s.text, s[variant], { textAlign: rtl ? 'right' : 'left', writingDirection: rtl ? 'rtl' : 'ltr' }, style]}>{children}</Text>;
+  return <Text selectable={selectable} numberOfLines={numberOfLines} style={[s.text, s[variant], { textAlign: rtl ? 'right' : 'left', writingDirection: rtl ? 'rtl' : 'ltr' }, style]}>{children}</Text>;
 }
 export function Row({ children, style, gap = 8 }: { children: ReactNode; style?: ViewStyle; gap?: number }) {
   const { rtl } = useI18n();

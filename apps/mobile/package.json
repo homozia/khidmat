@@ -28,7 +28,9 @@
   },
   "devDependencies": {
     "@types/react": "~19.3.0",
-    "typescript": "~6.0.3"
+    "typescript": "~6.0.3",
+    "vitest": "5.1.0",
+    "pg": "8.23.1"
   },
   "scripts": {
     "start": "expo start",
@@ -38,7 +40,8 @@
     "export:android": "expo export --platform android --output-dir dist-android",
     "export:web": "expo export --platform web --output-dir dist-web",
     "prebuild:fieldtest": "APP_VARIANT=fieldtest expo prebuild --platform android --clean --no-install",
-    "apk:fieldtest": "npm run prebuild:fieldtest && cd android && ./gradlew :app:assembleRelease --no-daemon"
+    "apk:fieldtest": "npm run prebuild:fieldtest && cd android && ./gradlew :app:assembleRelease --no-daemon",
+    "test": "vitest run"
   },
   "private": true
 }

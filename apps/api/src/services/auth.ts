@@ -17,6 +17,8 @@ export interface AuthUser {
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 const OTP_TTL_MS = 5 * 60_000;
 const MAX_OTP_PER_WINDOW = 3;
+/** Sandbox codes send no SMS, so testers switching accounts are not held to the paid-SMS limit. */
+const MAX_SANDBOX_OTP_PER_WINDOW = 30;
 const OTP_WINDOW_MIN = 15;
 const MAX_ATTEMPTS = 5;
 
@@ -31,7 +33,7 @@ export async function requestOtp(rawPhone: string): Promise<{ expiresInSeconds: 
   const recent = await one<{ n: number }>(pool,
     `SELECT count(*)::int AS n FROM otp_challenges WHERE phone_e164 = $1 AND created_at > now() - make_interval(mins => $2)`,
     [phone, OTP_WINDOW_MIN]);
-  if ((recent?.n ?? 0) >= MAX_OTP_PER_WINDOW) {
+  if ((recent?.n ?? 0) >= (usesSandbox(phone) ? MAX_SANDBOX_OTP_PER_WINDOW : MAX_OTP_PER_WINDOW)) {
     throw new AppError(429, 'OTP_RATE_LIMITED', `Too many codes requested. Try again in ${OTP_WINDOW_MIN} minutes.`);
   }
   const code = usesSandbox(phone) ? config.SANDBOX_OTP_CODE : String(randomInt(0, 1_000_000)).padStart(6, '0');

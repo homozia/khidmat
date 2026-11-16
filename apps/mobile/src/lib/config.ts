@@ -20,6 +20,12 @@ let current = DEFAULT_URL;
 
 export const apiUrl = () => current;
 
+/**
+ * A short, storage-safe name for a server, used to keep sessions, unsent bookings and files apart per server.
+ * Two test servers seeded with the same synthetic users therefore never share a draft.
+ */
+export const serverScope = (url: string = current) => url.replace(/^https?:\/\//i, '').replace(/[^A-Za-z0-9.-]/g, '_').slice(0, 80);
+
 export async function loadServerUrl() {
   if (!CAN_CHANGE_SERVER) return current;
   const saved = await AsyncStorage.getItem(SERVER_KEY);

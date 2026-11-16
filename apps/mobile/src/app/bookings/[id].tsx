@@ -3,16 +3,31 @@ import { useCallback, useEffect, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView } from 'react-native';
 import { OutboxCard } from '@/components/OutboxCard';
 import { api } from '@/lib/api';
-import { errorText, supportRef } from '@/lib/errors';
+import { setCurrentBookingRef } from '@/lib/diagnostics';
+import { errorText } from '@/lib/errors';
 import { useI18n, useName } from '@/lib/i18n';
 import { Button, C, Card, Input, Journey, Notice, pkr, Row, StatusPill, T, when } from '@/lib/ui';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+/** One plain sentence per status: what happens next, and what (if anything) the customer should do. */
+const NEXT_STEP: Record<string, string> = {
+  requested: 'We are finding a provider. Their name will appear here, usually within 30 minutes.',
+  assigned: 'A provider has accepted. They will mark "On the way" when they leave.',
+  en_route: 'Your provider is on the way.',
+  on_site: 'Your provider has arrived.',
+  awaiting_approval: 'Your provider sent a new price. Approve or decline it below.',
+  in_progress: 'Work is in progress. Pay the provider in cash when it is finished.',
+  completed: 'Check the receipt, then tap "I paid in cash".',
+  closed: 'This booking is finished. You can rate the work or report a problem.',
+  cancelled: 'This booking is cancelled. You can book again from the home screen.',
+  no_provider: 'We could not find a provider for this time. Call us or choose another time.',
+};
+
 const COMPLAINT_TYPES: [string, string][] = [['quality', 'Quality'], ['price', 'Price'], ['conduct', 'Behaviour'], ['damage', 'Damage'], ['no_show', 'Did not come'], ['other', 'Other']];
 
 export default function BookingScreen() {
-  const { id, media } = useLocalSearchParams<{ id: string; media?: string }>();
+  const { id, created } = useLocalSearchParams<{ id: string; created?: string }>();
   const { t } = useI18n();
   const name = useName();
   const [b, setB] = useState<any>(null);
@@ -27,14 +42,15 @@ export default function BookingScreen() {
     try {
       const d = await api('GET', `/v1/bookings/${id}`);
       setB(d);
+      setCurrentBookingRef(d.ref);
       if (['completed', 'closed'].includes(d.status)) setReceipt(await api('GET', `/v1/bookings/${id}/receipt`));
-    } catch (e) { setMsg({ kind: 'err', text: errorText(e, t), ref: supportRef(e) }); }
+    } catch (e) { setMsg({ kind: 'err', text: errorText(e, t) }); }
   }, [id, t]);
   useEffect(() => { void load(); const h = setInterval(load, 20000); return () => clearInterval(h); }, [load]);
 
   const act = async (fn: () => Promise<unknown>, ok?: string) => {
     setBusy(true); setMsg(null);
-    try { await fn(); if (ok) setMsg({ kind: 'ok', text: ok }); await load(); } catch (e) { setMsg({ kind: 'err', text: errorText(e, t), ref: supportRef(e) }); } finally { setBusy(false); }
+    try { await fn(); if (ok) setMsg({ kind: 'ok', text: ok }); await load(); } catch (e) { setMsg({ kind: 'err', text: errorText(e, t) }); } finally { setBusy(false); }
   };
 
   if (!b) return <ScrollView contentContainerStyle={{ padding: 16 }}>{msg && <Notice kind={msg.kind} text={msg.text} />}</ScrollView>;
@@ -47,9 +63,12 @@ export default function BookingScreen() {
       <Row style={{ justifyContent: 'space-between' }}><T variant="title" style={{ flex: 1 }}>{name(b.job)}</T><StatusPill status={b.status} /></Row>
       <T variant="muted">{when(b.scheduled_start)}</T>
       {msg && <Notice kind={msg.kind} text={msg.text} />}
-      {msg?.ref && <T variant="small">{t('Support reference')}: {msg.ref}</T>}
-      {media === 'pending' && <OutboxCard />}
-      {b.status === 'no_provider' && <Notice kind="err" text={t('We could not find a provider for this time. Call us or choose another time.')} />}
+      {created === '1' && <Notice kind="ok" text={`${t('Booking received')}: ${b.ref}`} />}
+      <Card style={{ backgroundColor: C.primarySoft, borderColor: C.primarySoft }}>
+        <T variant="small">{t('What happens next')}</T>
+        <T>{t(NEXT_STEP[b.status] ?? '')}</T>
+      </Card>
+      <OutboxCard bookingId={b.id} />
       <Journey status={b.status} />
 
       {b.provider && <Card><T variant="small">{t('Your provider')}</T><T style={{ fontWeight: '600' }}>{b.provider.name}{b.provider.rating ? `  ★ ${b.provider.rating}` : ''}</T></Card>}

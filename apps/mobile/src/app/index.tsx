@@ -2,6 +2,7 @@ import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, View } from 'react-native';
 import { api } from '@/lib/api';
+import { CAN_CHANGE_SERVER } from '@/lib/config';
 import { OutboxCard } from '@/components/OutboxCard';
 import { errorText } from '@/lib/errors';
 import { useI18n, useName } from '@/lib/i18n';
@@ -56,6 +57,10 @@ export default function Home() {
       <Row style={{ justifyContent: 'space-between', marginTop: 8 }}>
         <Button kind="link" title={lang === 'ur' ? 'English' : 'اردو'} onPress={() => setLang(lang === 'ur' ? 'en' : 'ur')} />
         <Button kind="link" title={t('Sign out')} onPress={signOut} />
+      </Row>
+      <Row style={{ justifyContent: 'space-between' }}>
+        {CAN_CHANGE_SERVER && <Button kind="link" title={t('Test server')} onPress={() => router.push('/server')} />}
+        <Button kind="link" title={t('Diagnostics')} onPress={() => router.push('/diagnostics')} />
       </Row>
     </ScrollView>
   );

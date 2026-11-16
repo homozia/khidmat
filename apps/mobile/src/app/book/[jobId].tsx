@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, Switch, View } from 'react-native';
 import { OutboxCard } from '@/components/OutboxCard';
 import { api, ApiError } from '@/lib/api';
-import { errorText, supportRef } from '@/lib/errors';
+import { errorText } from '@/lib/errors';
 import { useI18n, useName } from '@/lib/i18n';
 import { createOutbox, loadOutbox, sendOutbox } from '@/lib/outbox';
 import { Button, C, Card, Input, Notice, pkr, Row, T, usePlace } from '@/lib/ui';
@@ -62,7 +62,7 @@ export default function Book() {
       const j = r.categories.find((c: any) => c.code === code)?.jobs.find((x: any) => x.id === jobId);
       setJob(j ?? null);
       if (j && !j.scheduled) setTiming('same_day');
-    }).catch((e) => setMsg({ kind: 'err', text: errorText(e, t), ref: supportRef(e) }));
+    }).catch((e) => setMsg({ kind: 'err', text: errorText(e, t) }));
   }, [jobId, code, place, t]);
 
   const needsDestination = !!job?.needs_destination;
@@ -90,7 +90,7 @@ export default function Book() {
   const showError = (e: unknown) => {
     const err = e as ApiError;
     if (err.code === 'INVALID_INTAKE' && err.details) setErrors(err.details as Record<string, string>);
-    setMsg({ kind: 'err', text: errorText(e, t), ref: supportRef(e) });
+    setMsg({ kind: 'err', text: errorText(e, t) });
   };
 
   const review = async () => {
@@ -110,12 +110,12 @@ export default function Book() {
           [...photos.map((p) => ({ ...p, kind: 'photo' as const })), ...(voice ? [{ ...voice, kind: 'voice' as const }] : [])]);
       }
       const r = await sendOutbox();
-      router.replace({ pathname: '/bookings/[id]', params: { id: r.booking.id, ...(r.mediaPending && { media: 'pending' }) } });
+      router.replace({ pathname: '/bookings/[id]', params: { id: r.booking.id, created: '1' } });
     } catch (e) {
       const err = e as ApiError;
       if (err.uncertain || err.code === 'REQUEST_IN_PROGRESS') {
         setUncertain(true);
-        setMsg({ kind: 'wait', text: `${t('We could not confirm whether your booking was received.')} ${t('Check again to find out. You will not be booked twice.')}`, ref: err.requestId });
+        setMsg({ kind: 'wait', text: `${t('We could not confirm whether your booking was received.')} ${t('Check again to find out. You will not be booked twice.')}` });
       } else if (err.code === 'PRICE_CHANGED' || err.code === 'PRICE_CONFIRMATION_REQUIRED') {
         // Nothing was created. Show the server's new terms; the customer must approve them again.
         setUncertain(false);
@@ -242,7 +242,6 @@ export default function Book() {
       {voice && <T variant="small">{t('Voice note added')}</T>}
 
       {msg && <Notice kind={msg.kind} text={msg.text} />}
-      {msg?.ref && <T variant="small">{t('Support reference')}: {msg.ref}</T>}
       {!terms
         ? <Button title={t('Review')} busy={busy} disabled={address.trim().length < 3 || (needsDestination && !dest.picked)} onPress={review} />
         : (

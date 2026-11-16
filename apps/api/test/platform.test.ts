@@ -1,5 +1,6 @@
 import { Writable } from 'node:stream';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { config } from '../src/config.ts';
 import type { FastifyInstance } from 'fastify';
 import { client, freshApp, idem, login, newKey, pool, tomorrowAt, JOB, LOCALITY, type Client } from './helpers.ts';
 
@@ -35,11 +36,21 @@ describe('auth: OTP sign-in, rate limits, sessions', () => {
     expect(locked.body.error.code).toBe('OTP_LOCKED');
   });
 
-  it('allows 3 codes per 15 minutes per phone', async () => {
+  it('live SMS: allows 3 codes per 15 minutes per phone', async () => {
     const anon = client(app);
-    for (let i = 0; i < 3; i++) expect((await anon.post('/v1/auth/otp/request', { phone: '03007778899' })).status).toBe(200);
-    const r = await anon.post('/v1/auth/otp/request', { phone: '03007778899' });
-    expect(r.status).toBe(429);
+    await pool.query(`INSERT INTO app.otp_challenges (phone_e164, code_hash, expires_at) SELECT '+923007778899', 'x', now() + interval '5 minutes' FROM generate_series(1, 3)`);
+    const saved = { p: config.SMS_PROVIDER };
+    config.SMS_PROVIDER = 'aggregator';
+    try {
+      const r = await anon.post('/v1/auth/otp/request', { phone: '03007778899' });
+      expect(r.status).toBe(429);
+    } finally { config.SMS_PROVIDER = saved.p; }
+  });
+
+  it('sandbox codes (no SMS sent): testers can switch accounts more often, up to 30 per 15 minutes', async () => {
+    const anon = client(app);
+    for (let i = 0; i < 30; i++) expect((await anon.post('/v1/auth/otp/request', { phone: '03007778800' })).status).toBe(200);
+    expect((await anon.post('/v1/auth/otp/request', { phone: '03007778800' })).status).toBe(429);
   });
 });
 
