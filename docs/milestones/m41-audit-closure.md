@@ -61,15 +61,16 @@
 | Customer walkthrough (English) | Web build of the TEST app at 360 × 760 | Sign-in → area with GPS denied → plumbing → review → confirm with the lost-reply control → **one booking** (count 2→3 at the drop, still 3 after "Check again") → booking detail → report → My bookings. No horizontal overflow, no page errors | Chrome (desktop) emulating a narrow screen, **not** a phone |
 | Customer walkthrough (Urdu) | Same, Urdu | Right-to-left layout correct; prices and numbers read correctly after the fix; no overflow | Chrome, narrow |
 | Provider and staff portals | Website at 390 × 844 | Accept offer, job, quote, change order, cash completion (fee PKR 96 on 1,200 + 450), lockout check form, complaint review, report. No overflow after the fixes | Chrome, narrow |
-| Signed APK | GitHub Actions | **Not run:** no repository exists yet (see below) | — |
+| GitHub CI | `.github/workflows/ci.yml` on homozia/khidmat | All steps green (the first run found `pgcrypto` missing in the CI database, now fixed) | GitHub Actions, ubuntu-24.04 |
+| Signed APK | **Field-test APK** run 43874694944 | `khidmat-m4.1-field-test.apk`: `pk.khidmat.customer.fieldtest`, versionCode 5, versionName 0.4.1, minSdk 24, targetSdk 36, label "Khidmat TEST", v2 signature verified, signer `CN=Khidmat Field Test, O=Khidmat, C=PK`, certificate SHA-256 `594f9b8e…c445b6` (matches), JavaScript bundle embedded (2.2 MB), APK SHA-256 `3ab6cf8b7304e740b95337fcf9cb80ad9388101a436c6d49500bb3b328ae07d5` | GitHub Actions |
 | Physical phone / emulator | PHONE_TEST_CHECKLIST.md | **Not run:** no Android device or SDK here | — |
 | Windows PowerShell scripts | — | **Not run:** no Windows or PowerShell here. The scripts only check Node and Docker and call the tested Node script | — |
 | Large system font | — | **Needs a phone** (checklist C5) | — |
 
 ## Needs your account or your phone
 
-1. **GitHub:** create the empty private repository `khidmat` and reply "repo created". Claude then pushes and sets the four signing secrets and the certificate variable. Alternatively follow `docs/operations/android-builds.md`, steps 2–3. Then click **Actions → Field-test APK → Run workflow** (versionCode 5) and download the **khidmat-m4.1-field-test** artifact.
+1. **GitHub:** done. Download the **khidmat-m4.1-field-test** artifact from run 43874694944 and check its SHA-256 (above).
 2. **Phone:** install the APK and run PHONE_TEST_CHECKLIST.md (smoke test A, then B–I).
 3. **Windows laptop:** run `start-test-env.ps1` once and report anything unclear.
 
-The package is **not yet "ready for phone testing"**: that needs the signed APK installed and connected to the test backend. Public launch is still **not ready** (live SMS, private storage, staging host, maps keys, Play signing and a physical-phone pass are outstanding; see `docs/operations/storage-and-sms.md`).
+The signed APK exists and is verified. The package becomes **"ready for phone testing"** once it is installed and connected to the test backend on your phone (checklist A1–A3). Public launch is still **not ready** (live SMS, private storage, staging host, maps keys, Play signing and a physical-phone pass are outstanding; see `docs/operations/storage-and-sms.md`).
