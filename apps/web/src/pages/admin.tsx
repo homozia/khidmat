@@ -2,6 +2,7 @@ import { Fragment, useState } from 'react';
 import { api, get, newIdempotencyKey, openSigned, post } from '../lib/api.ts';
 import { useRoute, go, type Me } from '../lib/route.ts';
 import { Places, ServiceSettings, Skills } from './setup.tsx';
+import { setLastBookingRef } from '../lib/diagnostics.ts';
 import { Empty, Field, JourneyRail, Loading, Notice, pkr, StatusPill, useAction, useLoad, when } from '../lib/ui.tsx';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -158,6 +159,7 @@ function BookingDetail({ id }: { id: string }) {
   const reload = () => { void b.reload(); void tl.reload(); void receipt.reload(); };
   if (!b.data) return <Loading error={b.error} loading={b.loading} />;
   const d = b.data;
+  setLastBookingRef(d.ref);
   return (
     <section className="stack">
       <button className="link" onClick={() => go('bookings')}>Back to bookings</button>

@@ -102,7 +102,7 @@ describe('D3 setup is safe to re-run', () => {
     const r = await initDatabase(pool);
     expect(r.seeded).toBe(true);
     expect(r.applied.length).toBeGreaterThanOrEqual(5);
-    expect(await snapshot()).toMatchObject({ bookings: 0, users: 12 });
+    expect(await snapshot()).toMatchObject({ bookings: 0, users: 13 });
   });
 });
 

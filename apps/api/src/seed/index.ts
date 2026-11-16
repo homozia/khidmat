@@ -42,6 +42,7 @@ export const DEMO_USERS = {
   driver: { phone: '+923002220003', name: 'Tariq (driver)', roles: ['provider'] },
   locksmithPending: { phone: '+923002220004', name: 'Zahid (locksmith, skill pending)', roles: ['provider'] },
   plumberRwp: { phone: '+923002220005', name: 'Imran (plumber, Rawalpindi)', roles: ['provider'] },
+  locksmith: { phone: '+923002220006', name: 'Rashid (locksmith, licensed)', roles: ['provider'] },
 } as const;
 
 type DemoKey = keyof typeof DEMO_USERS;
@@ -52,6 +53,8 @@ const PROVIDERS: { user: DemoKey; skills: [string, 'approved' | 'pending', strin
   { user: 'driver', skills: [['driver', 'approved', 'DEMO: LTV licence checked, expires 2027-12-31']], zones: ['RWP-ST', 'ISB-G'], base: [33.6380, 73.0700] },
   { user: 'locksmithPending', skills: [['locksmith', 'pending']], zones: ['ISB-G', 'ISB-F'], base: [33.6950, 73.0130] },
   { user: 'plumberRwp', skills: [['plumbing', 'approved']], zones: ['RWP-ST', 'RWP-CS3'], base: [33.5900, 73.0880] },
+  // Ready for the lockout test without a verification detour (Zahid stays pending for the verification test).
+  { user: 'locksmith', skills: [['locksmith', 'approved', 'DEMO: locksmith certificate checked, expires 2027-12-31']], zones: ['ISB-G', 'ISB-F'], base: [33.6930, 73.0150] },
 ];
 
 export const ids = {

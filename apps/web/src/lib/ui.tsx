@@ -23,7 +23,7 @@ export function useLoad<T>(fn: () => Promise<T>, deps: unknown[] = []) {
   const [loading, setLoading] = useState(true);
   const load = useCallback(async () => {
     setLoading(true);
-    try { setData(await fn()); setError(null); } catch (e) { const err = e as ApiError; setError(err.message + (err.requestId ? ` (support reference ${err.requestId})` : '')); } finally { setLoading(false); }
+    try { setData(await fn()); setError(null); } catch (e) { const err = e as ApiError; setError(err.message); } finally { setLoading(false); }
   }, deps);
   useEffect(() => { void load(); }, [load]);
   return { data, error, loading, reload: load };
@@ -39,7 +39,7 @@ export function useAction() {
     catch (e) {
       const err = e as ApiError;
       const details = err.details && typeof err.details === 'object' ? ' ' + Object.entries(err.details as Record<string, unknown>).map(([k, v]) => `${k}: ${String(v)}`).join('; ') : '';
-      setMsg({ kind: 'err', text: err.message + details + (err.requestId ? ` (support reference ${err.requestId})` : '') }); return false;
+      setMsg({ kind: 'err', text: err.message + details }); return false;
     } finally { setBusy(false); }
   };
   return { busy, msg, run, clear: () => setMsg(null), fail: (text: string) => setMsg({ kind: 'err', text }) };

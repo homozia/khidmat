@@ -188,7 +188,7 @@ describe('M3 - provider onboarding and verification', () => {
     const b = await u.customerIsb.post('/v1/bookings', { job_id: JOB('locksmith.lockout'), timing: 'scheduled', scheduled_start: tomorrowAt('10:00'),
       locality_id: LOCALITY.G10, address_line: 'House 3, G-10/3', intake: { occupant_confirmed: true } }, idem());
     const el = await u.dispatcher.get(`/v1/admin/bookings/${b.body.id}/eligible-providers`);
-    expect(el.body.map((p: { provider_id: string }) => p.provider_id)).toEqual([providerId]);
+    expect(el.body.map((p: { provider_id: string }) => p.provider_id)).toContain(providerId); // alongside the seeded licensed locksmith
   });
 
   it('lockout intake requires the occupant confirmation', async () => {

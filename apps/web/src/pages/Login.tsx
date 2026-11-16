@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { post, setToken } from '../lib/api.ts';
 import { useI18n } from '../lib/i18n.tsx';
 import { Field, Notice, useAction } from '../lib/ui.tsx';
+import { RoleCard } from './tools.tsx';
 
-export function Login({ onSignedIn }: { onSignedIn: () => void }) {
+export function Login({ onSignedIn, showRoles }: { onSignedIn: () => void; showRoles?: boolean }) {
   const { t, lang, setLang } = useI18n();
   const [phone, setPhone] = useState('');
   const [code, setCode] = useState('');
@@ -44,6 +45,7 @@ export function Login({ onSignedIn }: { onSignedIn: () => void }) {
           {sent && <button type="button" className="link" onClick={() => { setSent(false); setCode(''); a.clear(); }}>{t('Use a different number')}</button>}
         </div>
       </form>
+      {showRoles && !sent && <RoleCard onPick={(p) => { setPhone(p); a.clear(); }} />}
     </div>
   );
 }

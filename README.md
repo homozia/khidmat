@@ -88,7 +88,7 @@ apps/api/
   src/app.ts          HTTP routes (Fastify)
   src/services/       business rules: auth, coverage, pricing, bookings, dispatch, finance, idempotency
   src/domain/states.ts  booking state machine
-  src/seed/           deterministic demo data (11 categories, 51 jobs, 4 zones, 12 people)
+  src/seed/           deterministic demo data (11 categories, 51 jobs, 4 zones, 13 people)
   test/               API integration tests against real PostgreSQL + PostGIS
 apps/mobile/app.config.ts   build variants (fieldtest / staging / production)
 .github/workflows/    ci.yml (lint, types, PostGIS tests, builds) and android-apk.yml (signed field-test APK)

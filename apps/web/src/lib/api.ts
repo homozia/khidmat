@@ -1,4 +1,5 @@
 /** Thin client for the Khidmat API. The token lives in sessionStorage (cleared when the tab closes). */
+import { recordFailure } from './diagnostics.ts';
 
 const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? '';
 
@@ -43,12 +44,14 @@ export async function api<T = any>(method: string, path: string, body?: unknown,
   try {
     res = await fetch(`${BASE}${path}`, { method, headers, body: payload });
   } catch {
+    recordFailure({ method, path, status: 0, code: 'NETWORK' });
     throw new ApiError(0, 'NETWORK', 'No connection. Check the internet and try again.');
   }
   if (res.status === 204) return undefined as T;
   const data = await res.json().catch(() => null);
   if (!res.ok) {
     if (res.status === 401) setToken(null);
+    recordFailure({ method, path, status: res.status, code: data?.error?.code ?? 'ERROR', request_id: data?.error?.request_id ?? res.headers.get('x-request-id') ?? undefined });
     throw new ApiError(res.status, data?.error?.code ?? 'ERROR', data?.error?.message ?? `Request failed (${res.status})`, data?.error?.details,
       data?.error?.request_id ?? res.headers.get('x-request-id') ?? undefined);
   }

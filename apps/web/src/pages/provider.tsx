@@ -2,6 +2,7 @@ import { Fragment, useState } from 'react';
 import { api, get, newIdempotencyKey, post } from '../lib/api.ts';
 import { useI18n, useName } from '../lib/i18n.tsx';
 import { go, useRoute } from '../lib/route.ts';
+import { setLastBookingRef } from '../lib/diagnostics.ts';
 import { Empty, Field, JourneyRail, Loading, Notice, pkr, StatusPill, useAction, useLoad, when } from '../lib/ui.tsx';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -100,6 +101,7 @@ function JobDetail({ id }: { id: string }) {
   const [completeKey] = useState(newIdempotencyKey);
 
   if (!b) return <Loading error={error} loading={loading} />;
+  setLastBookingRef(b.ref);
   const next = NEXT[b.status];
   const working = ['on_site', 'in_progress', 'assigned', 'en_route'].includes(b.status);
   const visitOnly = b.quotes.some((q: any) => q.status === 'approved' && q.lines.every((l: any) => l.charge_type === 'visit_charge'));

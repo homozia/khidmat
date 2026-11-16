@@ -118,6 +118,9 @@ main.content { padding: 1.5rem; max-width: 1200px; width: 100%; min-width: 0; }
 /* Provider portal: one column, phone first */
 .mobile { max-width: 34rem; margin: 0 auto; padding: 1rem 1rem 6rem; }
 .tabbar { position: fixed; inset-inline: 0; bottom: 0; display: grid; grid-template-columns: repeat(4, 1fr); background: var(--surface); border-top: 1px solid var(--line); }
+/* Keep the last action and the footer clear of the fixed tab bar. */
+body:has(.tabbar) { padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px)); }
+.tabbar { padding-bottom: env(safe-area-inset-bottom, 0px); }
 .tabbar a { display: grid; place-items: center; min-height: 56px; color: var(--muted); text-decoration: none; font-size: .9rem; }
 .tabbar a[aria-current='page'] { color: var(--primary); font-weight: 600; box-shadow: inset 0 3px 0 var(--primary); }
 .job-card { display: block; text-decoration: none; color: inherit; }
@@ -131,8 +134,8 @@ main.content { padding: 1.5rem; max-width: 1200px; width: 100%; min-width: 0; }
 .zone-shape { width: 100%; max-width: 220px; height: auto; background: var(--primary-soft); border-radius: var(--radius-control); }
 
 @media (max-width: 760px) {
-  .layout { grid-template-columns: minmax(0, 1fr); }
-  .sidenav { display: flex; overflow-x: auto; padding: .4rem; border-inline-end: none; border-bottom: 1px solid var(--line); }
+  .layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; align-content: start; }
+  .sidenav { display: flex; align-items: center; overflow-x: auto; padding: .4rem; border-inline-end: none; border-bottom: 1px solid var(--line); }
   .sidenav .group { display: none; }
   .sidenav a { white-space: nowrap; }
   main.content { padding: 1rem; }
