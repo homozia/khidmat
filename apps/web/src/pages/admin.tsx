@@ -1,6 +1,7 @@
 import { Fragment, useState } from 'react';
 import { api, get, newIdempotencyKey, openSigned, post } from '../lib/api.ts';
 import { useRoute, go, type Me } from '../lib/route.ts';
+import { Places, ServiceSettings, Skills } from './setup.tsx';
 import { Empty, Field, JourneyRail, Loading, Notice, pkr, StatusPill, useAction, useLoad, when } from '../lib/ui.tsx';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -14,6 +15,8 @@ const SECTIONS: { key: string; label: string; roles: string[]; group: string }[]
   { key: 'reports', label: 'Reports', roles: ['dispatcher', 'finance'], group: 'Money' },
   { key: 'catalogue', label: 'Services and prices', roles: ['config_admin'], group: 'Setup' },
   { key: 'zones', label: 'Service areas', roles: ['config_admin'], group: 'Setup' },
+  { key: 'places', label: 'Places', roles: ['config_admin'], group: 'Setup' },
+  { key: 'skills', label: 'Skills', roles: ['config_admin'], group: 'Setup' },
 ];
 
 export function AdminApp({ me }: { me: Me }) {
@@ -39,6 +42,8 @@ export function AdminApp({ me }: { me: Me }) {
         {section === 'reports' && <Reports />}
         {section === 'catalogue' && <Catalogue />}
         {section === 'zones' && <Zones />}
+        {section === 'places' && <Places />}
+        {section === 'skills' && <Skills />}
       </main>
     </div>
   );
@@ -145,10 +150,12 @@ function BookingDetail({ id }: { id: string }) {
   const files = useLoad(() => get<any[]>(`/v1/bookings/${id}/attachments`), [id]);
   const a = useAction();
   const [reason, setReason] = useState('');
-  const [visit, setVisit] = useState('500');
+  const [visitReason, setVisitReason] = useState('');
+  const receipt = useLoad(() => get<any>(`/v1/bookings/${id}/receipt`).catch(() => null), [id]);
+  const [paid, setPaid] = useState<Record<string, { method: string; reference: string }>>({});
   const [refund, setRefund] = useState({ charge_type: 'labour', amount: '', reason: '' });
   const [refundKey] = useState(newIdempotencyKey);
-  const reload = () => { void b.reload(); void tl.reload(); };
+  const reload = () => { void b.reload(); void tl.reload(); void receipt.reload(); };
   if (!b.data) return <Loading error={b.error} loading={b.loading} />;
   const d = b.data;
   return (
@@ -166,6 +173,9 @@ function BookingDetail({ id }: { id: string }) {
           <dt>Price terms</dt><dd>{d.booking_mode} · commission {d.terms_snapshot.commission.rate_bps / 100}% {d.terms_snapshot.pricing_is_demo && <span className="pill pill-pending">demo price</span>}</dd>
           <dt>Customer total</dt><dd className="num">{pkr(d.totals.customer_total_paisa)}{d.totals.refunded_paisa > 0 && ` (refunded ${pkr(d.totals.refunded_paisa)})`}</dd>
           {d.provider_money && <><dt>Platform fee</dt><dd className="num">{pkr(d.provider_money.fee_paisa)}</dd></>}
+          {d.terms_snapshot.requires_authorization_check && <><dt>Lockout check</dt><dd>{d.authorization_check ? (d.authorization_check.verified ? `Verified: ${d.authorization_check.method.replace(/_/g, ' ')}` : 'Could not be verified') : 'Not recorded yet'}</dd></>}
+          {receipt.data && <><dt>Cash</dt><dd>{receipt.data.payment_status_text ?? receipt.data.payment_status}</dd></>}
+          {receipt.data?.outstanding?.length > 0 && <><dt>Still to do</dt><dd>{receipt.data.outstanding.join('; ')}</dd></>}
         </dl>
       </div>
       {files.data && files.data.length > 0 && (
@@ -179,10 +189,17 @@ function BookingDetail({ id }: { id: string }) {
         <div className="row">
           {['assigned', 'en_route', 'no_provider'].includes(d.status) && <button disabled={a.busy || reason.length < 3} onClick={() => a.run(() => post(`/v1/admin/bookings/${id}/reassign`, { reason }), 'Taken back from the provider; offer it again from Dispatch.').then(reload)}>Reassign</button>}
           {['requested', 'assigned', 'en_route', 'no_provider', 'awaiting_approval'].includes(d.status) && <button className="danger" disabled={a.busy || reason.length < 3} onClick={() => a.run(() => post(`/v1/bookings/${id}/cancel`, { reason }), 'Booking cancelled').then(reload)}>Cancel booking</button>}
-          {d.status === 'on_site' && <>
-            <input style={{ width: '8rem' }} dir="ltr" value={visit} onChange={(e) => setVisit(e.target.value)} aria-label="Visit charge (PKR)" />
-            <button disabled={a.busy || reason.length < 5} onClick={() => a.run(() => post(`/v1/admin/bookings/${id}/visit-charge`, { amount_paisa: Math.round(Number(visit) * 100), reason }), 'Only the visit charge will be billed.').then(reload)}>Bill visit charge only</button>
-          </>}
+          {d.status === 'on_site' && (d.terms_snapshot.visit_charge_paisa > 0 ? <>
+            <select style={{ width: 'auto' }} value={visitReason} onChange={(e) => setVisitReason(e.target.value)} aria-label="Why the work cannot go ahead">
+              <option value="">Why the work cannot go ahead…</option>
+              <option value="authorization_not_verified">Occupancy could not be verified (lockout)</option>
+              <option value="customer_absent">Customer not there</option>
+              <option value="access_refused">Access refused</option>
+            </select>
+            <button disabled={a.busy || !visitReason || reason.length < 5} onClick={() => a.run(() => post(`/v1/admin/bookings/${id}/visit-charge`, { reason: visitReason, note: reason }), 'Only the disclosed visit charge will be billed.').then(reload)}>
+              Bill the agreed visit charge ({pkr(d.terms_snapshot.visit_charge_paisa)})
+            </button>
+          </> : <span className="muted">No visit charge was agreed for this booking.</span>)}
         </div>
         {['completed', 'closed'].includes(d.status) && (
           <form className="row" style={{ marginTop: '1rem' }} onSubmit={(e) => { e.preventDefault(); void a.run(() => post(`/v1/admin/bookings/${id}/refunds`, { charge_type: refund.charge_type, amount_paisa: Math.round(Number(refund.amount) * 100), reason: refund.reason }, refundKey), 'Refund recorded; commission recalculated.').then(reload); }}>
@@ -196,6 +213,30 @@ function BookingDetail({ id }: { id: string }) {
         )}
         <Notice msg={a.msg} />
       </div>
+      {receipt.data?.refunds?.length > 0 && (
+        <div className="panel table-wrap">
+          <h2>Refunds</h2>
+          <table>
+            <thead><tr><th>Type</th><th className="num">Amount</th><th>Reason</th><th>Paid to customer</th></tr></thead>
+            <tbody>{receipt.data.refunds.map((r: any) => (
+              <tr key={r.id}>
+                <td>{r.charge_type.replace(/_/g, ' ')}</td><td className="num">{pkr(r.amount_paisa)}</td><td>{r.reason}</td>
+                <td>{r.status === 'paid' ? `${r.paid_method} · ${r.paid_reference} · ${when(r.paid_at)}` : (
+                  <form className="row" onSubmit={(e) => { e.preventDefault(); void a.run(() => post(`/v1/admin/refunds/${r.id}/paid`, paid[r.id]), 'Refund marked as paid').then(reload); }}>
+                    <select style={{ width: 'auto' }} aria-label="How it was paid" value={paid[r.id]?.method ?? ''} required
+                      onChange={(e) => setPaid({ ...paid, [r.id]: { method: e.target.value, reference: paid[r.id]?.reference ?? '' } })}>
+                      <option value="">Paid by…</option><option value="cash">Cash</option><option value="jazzcash">JazzCash</option><option value="easypaisa">Easypaisa</option><option value="bank_transfer">Bank transfer</option>
+                    </select>
+                    <input style={{ width: '10rem' }} dir="ltr" placeholder="Reference or receipt no." aria-label="Payment reference" required minLength={3}
+                      value={paid[r.id]?.reference ?? ''} onChange={(e) => setPaid({ ...paid, [r.id]: { method: paid[r.id]?.method ?? '', reference: e.target.value } })} />
+                    <button className="small" disabled={a.busy}>Mark paid</button>
+                  </form>
+                )}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      )}
       <div className="panel table-wrap">
         <h2>Timeline</h2>
         <table><tbody>{tl.data?.map((e, i) => (
@@ -319,6 +360,8 @@ function ProviderPanel({ p, onChange }: { p: any; onChange: () => void }) {
   const a = useAction();
   const [note, setNote] = useState('');
   const [expiry, setExpiry] = useState('');
+  const [evidence, setEvidence] = useState('');
+  const accepted = (docs.data ?? []).filter((d) => d.status === 'accepted');
   return (
     <div className="stack" style={{ padding: '.5rem 0' }}>
       <h3>Documents</h3>
@@ -335,9 +378,15 @@ function ProviderPanel({ p, onChange }: { p: any; onChange: () => void }) {
       ))}
       <Field label="What you checked (licence or certificate number, CNIC match)"><input value={note} onChange={(e) => setNote(e.target.value)} /></Field>
       <Field label="Licence or certificate expiry (required for driver, electrical, locksmith, solar)"><input type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)} /></Field>
+      <Field label="Evidence for a restricted skill (an accepted document)">
+        <select value={evidence} onChange={(e) => setEvidence(e.target.value)}>
+          <option value="">{accepted.length ? 'Choose the accepted document…' : 'Accept the licence or certificate above first'}</option>
+          {accepted.map((d) => <option key={d.id} value={d.id}>{d.doc_type.replace(/_/g, ' ')} · {when(d.created_at)}</option>)}
+        </select>
+      </Field>
       <div className="row">
         {(p.skills ?? []).filter((s: any) => s.status !== 'approved').map((s: any) => (
-          <button key={s.skill} className="small" disabled={a.busy || note.length < 3} onClick={() => a.run(() => post(`/v1/admin/providers/${p.id}/skills/${s.skill}`, { decision: 'approved', check_note: note, ...(expiry && { expires_at: expiry }) }), `Skill ${s.skill} approved`).then(onChange)}>Approve skill: {s.skill}</button>
+          <button key={s.skill} className="small" disabled={a.busy || note.length < 3} onClick={() => a.run(() => post(`/v1/admin/providers/${p.id}/skills/${s.skill}`, { decision: 'approved', check_note: note, ...(expiry && { expires_at: expiry }), ...(evidence && { evidence_document_id: evidence }) }), `Skill ${s.skill} approved`).then(onChange)}>Approve skill: {s.skill}</button>
         ))}
         {p.status !== 'approved' && <button className="small primary" disabled={a.busy || note.length < 3} onClick={() => a.run(() => post(`/v1/admin/providers/${p.id}/status`, { status: 'approved', reason: note }), 'Provider approved').then(onChange)}>Approve provider</button>}
         {p.status === 'approved' && <button className="small danger" disabled={a.busy || note.length < 3} onClick={() => a.run(() => post(`/v1/admin/providers/${p.id}/status`, { status: 'suspended', reason: note }), 'Suspended; open offers withdrawn').then(onChange)}>Suspend</button>}
@@ -444,6 +493,7 @@ function Catalogue() {
       <h1>Services and prices</h1>
       <p className="muted">Changes reach the customer app immediately. Existing bookings keep the price and terms they were booked with.</p>
       <Notice msg={a.msg} />
+      <NewCategory onDone={cat.reload} />
       {cat.data.map((c, i) => (
         <div key={c.id} className="panel">
           <div className="row" style={{ justifyContent: 'space-between' }}>
@@ -481,7 +531,7 @@ function JobRow({ j, zones, onChange }: { j: any; zones: any[]; onChange: () => 
         <td><StatusPill status={j.status} /></td>
         <td className="row">
           <button className="small" onClick={() => a.run(() => post(`/v1/admin/jobs/${j.id}/status`, { status: j.status === 'active' ? 'paused' : 'active' })).then(onChange)}>{j.status === 'active' ? 'Pause' : 'Activate'}</button>
-          <button className="small" onClick={() => setEdit(!edit)}>{edit ? 'Close' : 'Price and areas'}</button>
+          <button className="small" onClick={() => setEdit(!edit)}>{edit ? 'Close' : 'Edit'}</button>
         </td>
       </tr>
       {edit && (
@@ -501,6 +551,7 @@ function JobRow({ j, zones, onChange }: { j: any; zones: any[]; onChange: () => 
             return <button key={z.id} className="small" aria-pressed={on} onClick={() => a.run(() => api('PUT', `/v1/admin/jobs/${j.id}/zones/${z.id}`, { status: on ? 'paused' : 'enabled' })).then(onChange)}>{on ? '✓ ' : ''}{z.code}</button>;
           })}</div>
           <Notice msg={a.msg} />
+          <ServiceSettings jobId={j.id} onChange={onChange} />
         </td></tr>
       )}
     </>
@@ -518,11 +569,26 @@ function ZoneShape({ geo }: { geo: any }) {
   return <svg className="zone-shape" viewBox={`0 0 ${(x1 - x0) * s + 20} ${(y1 - y0) * s + 20}`} role="img" aria-label="Zone outline"><path d={d} fill="rgba(31,92,153,.18)" stroke="#1F5C99" strokeWidth="2" /></svg>;
 }
 
+function NewCategory({ onDone }: { onDone: () => void }) {
+  const a = useAction();
+  const [c, setC] = useState({ code: '', name_en: '', name_ur: '' });
+  return (
+    <form className="panel row" onSubmit={(e) => { e.preventDefault(); void a.run(() => post('/v1/admin/categories', c), 'Category added as a draft. Add its services, then activate it.').then((ok) => { if (ok) { setC({ code: '', name_en: '', name_ur: '' }); onDone(); } }); }}>
+      <Field label="New category code"><input dir="ltr" placeholder="pest_control" value={c.code} onChange={(e) => setC({ ...c, code: e.target.value })} required /></Field>
+      <Field label="Name (English)"><input value={c.name_en} onChange={(e) => setC({ ...c, name_en: e.target.value })} required /></Field>
+      <Field label="Name (Urdu)"><input lang="ur" dir="rtl" value={c.name_ur} onChange={(e) => setC({ ...c, name_ur: e.target.value })} required /></Field>
+      <button disabled={a.busy}>Add category</button>
+      <Notice msg={a.msg} />
+    </form>
+  );
+}
+
 function Zones() {
   const zones = useLoad(() => get<any[]>('/v1/admin/zones'));
   const a = useAction();
   const [notes, setNotes] = useState<Record<string, string>>({});
-  const [nz, setNz] = useState({ code: '', name_en: '', name_ur: '', city_code: 'ISB', geo: '', travel: '0' });
+  const cities = useLoad(() => get<any[]>('/v1/admin/regions').then((r) => r.filter((x) => x.level === 'city' && x.status === 'active')));
+  const [nz, setNz] = useState({ code: '', name_en: '', name_ur: '', city_region_id: '', geo: '', travel: '0' });
   return (
     <section className="stack">
       <h1>Service areas</h1>
@@ -548,14 +614,16 @@ function Zones() {
         let boundary: unknown;
         try { const g = JSON.parse(nz.geo); boundary = g.type === 'Feature' ? g.geometry : g.type === 'FeatureCollection' ? g.features[0].geometry : g; }
         catch { void a.run(async () => { throw new Error('The boundary must be GeoJSON (a Polygon, MultiPolygon or a Feature).'); }); return; }
-        void a.run(() => post('/v1/admin/zones', { code: nz.code, name_en: nz.name_en, name_ur: nz.name_ur, city_code: nz.city_code, boundary, travel_charge_paisa: Math.round(Number(nz.travel) * 100) }), 'Zone saved as a draft').then(zones.reload);
+        void a.run(() => post('/v1/admin/zones', { code: nz.code, name_en: nz.name_en, name_ur: nz.name_ur, city_region_id: nz.city_region_id, boundary, travel_charge_paisa: Math.round(Number(nz.travel) * 100) }), 'Zone saved as a draft').then(zones.reload);
       }}>
         <h2>Add a zone</h2>
         <div className="row">
           <Field label="Code"><input value={nz.code} onChange={(e) => setNz({ ...nz, code: e.target.value.toUpperCase() })} placeholder="ISB-I8" required /></Field>
           <Field label="Name (English)"><input value={nz.name_en} onChange={(e) => setNz({ ...nz, name_en: e.target.value })} required /></Field>
           <Field label="Name (Urdu)"><input lang="ur" dir="rtl" value={nz.name_ur} onChange={(e) => setNz({ ...nz, name_ur: e.target.value })} required /></Field>
-          <Field label="City"><select value={nz.city_code} onChange={(e) => setNz({ ...nz, city_code: e.target.value })}><option value="ISB">Islamabad</option><option value="RWP">Rawalpindi</option></select></Field>
+          <Field label="City"><select value={nz.city_region_id} onChange={(e) => setNz({ ...nz, city_region_id: e.target.value })} required>
+            <option value="">Choose…</option>{cities.data?.map((c) => <option key={c.id} value={c.id}>{c.name_en}</option>)}
+          </select></Field>
           <Field label="Travel charge (PKR)"><input dir="ltr" value={nz.travel} onChange={(e) => setNz({ ...nz, travel: e.target.value })} /></Field>
         </div>
         <Field label="Boundary (GeoJSON from geojson.io or a GPS app export)" hint="Longitude first, then latitude, e.g. [73.07, 33.66]. You can also choose a .geojson file.">

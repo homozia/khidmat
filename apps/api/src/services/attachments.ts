@@ -22,8 +22,15 @@ async function bookingAccess(db: Db, user: AuthUser, bookingId: string) {
 }
 
 /** Customers add up to 3 photos and one voice note; the provider adds completion or lockout proof photos. */
-export async function addAttachment(c: PoolClient, user: AuthUser, bookingId: string, kind: AttachmentKind, declaredType: string, buf: Buffer) {
+export async function addAttachment(c: PoolClient, user: AuthUser, bookingId: string, kind: AttachmentKind, declaredType: string, buf: Buffer, clientRef?: string) {
   const b = await bookingAccess(c, user, bookingId);
+  if (clientRef) {
+    // A retried upload (reply lost, app restarted) returns the file already stored instead of adding a copy.
+    await c.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`${bookingId}:${clientRef}`]);
+    const prior = await one<{ id: string; kind: string; content_type: string; size_bytes: number }>(c,
+      'SELECT id, kind, content_type, size_bytes FROM attachments WHERE booking_id = $1 AND client_ref = $2', [bookingId, clientRef]);
+    if (prior) return { ...prior, replayed: true };
+  }
   const type = validateUpload(kind === 'voice' ? KINDS.voice : KINDS.photo, declaredType, buf);
   if (kind === 'photo' || kind === 'voice') {
     if (!b.isCustomer) throw notFound('Booking');
@@ -36,8 +43,8 @@ export async function addAttachment(c: PoolClient, user: AuthUser, bookingId: st
   }
   const key = await putFile('booking', buf, type);
   const row = await one<{ id: string }>(c,
-    `INSERT INTO attachments (booking_id, owner_user_id, kind, storage_key, content_type, size_bytes) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-    [bookingId, user.id, kind, key, type, buf.length]);
+    `INSERT INTO attachments (booking_id, owner_user_id, kind, storage_key, content_type, size_bytes, client_ref) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+    [bookingId, user.id, kind, key, type, buf.length, clientRef ?? null]);
   return { id: row!.id, kind, content_type: type, size_bytes: buf.length };
 }
 

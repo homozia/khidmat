@@ -51,7 +51,12 @@ function Offers() {
             <p className="muted">{t('Address is shown after you accept.')} {t('Offer expires')} {when(o.expires_at)}</p>
             <div className="row">
               <button className="primary" disabled={a.busy} onClick={async () => {
-                if (await a.run(() => post(`/v1/provider/offers/${o.assignment_id}/accept`))) go(`jobs/${o.booking_id}`);
+                // The server re-checks licence, availability, area and overlapping jobs when you accept.
+                let r: any = null;
+                if (await a.run(async () => { r = await post(`/v1/provider/offers/${o.assignment_id}/accept`); })) {
+                  if (r?.status === 'accepted') go(`jobs/${o.booking_id}`);
+                  else { a.fail(r?.status === 'expired' ? t('This offer has expired.') : `${t('This offer is no longer available to you.')} ${r?.reason ?? ''}`); void reload(); }
+                }
               }}>{t('Accept')}</button>
               <button disabled={a.busy} onClick={() => a.run(() => post(`/v1/provider/offers/${o.assignment_id}/decline`)).then(reload)}>{t('Decline')}</button>
             </div>
@@ -125,15 +130,18 @@ function JobDetail({ id }: { id: string }) {
         {b.provider_money && (
           <div className="money-lines" style={{ marginTop: '1rem' }}>
             <span>{t('Customer total')}</span><span className="num">{pkr(b.totals.customer_total_paisa - b.totals.refunded_paisa)}</span>
+            <span className="muted">{t('Fee charged on (labour)')}</span><span className="num muted">{pkr(b.provider_money.commissionable_paisa)}</span>
+            <span className="muted">{t('No fee on (materials, travel, tolls)')}</span><span className="num muted">{pkr(b.totals.customer_total_paisa - b.totals.refunded_paisa - b.provider_money.commissionable_paisa)}</span>
             <span>{t('Platform fee')} ({b.provider_money.commission_rate_bps / 100}%)</span><span className="num">−{pkr(b.provider_money.fee_paisa)}</span>
             <span className="total">{t('Your earnings')}</span><span className="total num">{pkr(b.provider_money.net_paisa)}</span>
           </div>
         )}
       </div>
 
+      {b.requires_authorization_check && <AuthorizationCheck booking={b} onDone={reload} />}
       <Notice msg={a.msg} />
       <div className="big-actions">
-        {next && <button className="primary" disabled={a.busy} onClick={() => a.run(() => post(`/v1/provider/bookings/${id}/status`, { to: next[0] })).then(reload)}>{t(next[1])}</button>}
+        {next && <button className="primary" disabled={a.busy || (next[0] === 'in_progress' && b.requires_authorization_check && !b.authorization_check?.verified)} onClick={() => a.run(() => post(`/v1/provider/bookings/${id}/status`, { to: next[0] })).then(reload)}>{t(next[1])}</button>}
         {working && !showQuote && <button disabled={a.busy} onClick={() => setShowQuote(true)}>{t('Send price for approval')}</button>}
       </div>
       {showQuote && <QuoteBuilder bookingId={id} onDone={() => { setShowQuote(false); void reload(); }} driver={b.job?.name_en?.toLowerCase().includes('driver') || b.destination_text} />}
@@ -212,6 +220,37 @@ function PhotoUpload({ bookingId }: { bookingId: string }) {
       </Field>
       <Notice msg={a.msg} />
     </div>
+  );
+}
+
+/** Lockouts: the provider records how occupancy was checked before opening anything. Work cannot start without it. */
+function AuthorizationCheck({ booking, onDone }: { booking: any; onDone: () => void }) {
+  const { t } = useI18n();
+  const a = useAction();
+  const [method, setMethod] = useState('');
+  const [note, setNote] = useState('');
+  const c = booking.authorization_check;
+  if (c) {
+    return <p className={`notice notice-${c.verified ? 'ok' : 'err'}`}>{c.verified ? t('Occupancy verified. You can start the work.') : t('Occupancy could not be verified. Do not open the lock. Call dispatch; the agreed visit charge applies.')}</p>;
+  }
+  if (booking.status !== 'on_site') return <p className="notice notice-err">{t('Lockout: when you arrive, check that the customer lives here before opening anything.')}</p>;
+  return (
+    <form className="panel" onSubmit={(e) => { e.preventDefault(); void a.run(() => post(`/v1/provider/bookings/${booking.id}/authorization-check`, { verified: method !== 'not_verifiable', method, note })).then(onDone); }}>
+      <h2>{t('Check occupancy before opening')}</h2>
+      <Field label={t('How did you check?')}>
+        <select value={method} onChange={(e) => setMethod(e.target.value)} required>
+          <option value="">{t('Choose one')}</option>
+          <option value="photo_id_matches_address">{t('Photo ID shows this address')}</option>
+          <option value="utility_bill">{t('Utility bill in their name for this address')}</option>
+          <option value="tenancy_document">{t('Tenancy agreement for this address')}</option>
+          <option value="guard_or_neighbour">{t('Guard or neighbour confirmed they live here')}</option>
+          <option value="not_verifiable">{t('Could not verify')}</option>
+        </select>
+      </Field>
+      <Field label={t('What you saw (no ID numbers)')}><input value={note} onChange={(e) => setNote(e.target.value)} required minLength={3} /></Field>
+      <button className="primary" disabled={a.busy || !method}>{t('Record check')}</button>
+      <Notice msg={a.msg} />
+    </form>
   );
 }
 

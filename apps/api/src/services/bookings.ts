@@ -190,7 +190,7 @@ async function computeBooking(c: Db, user: AuthUser, input: CreateBookingInput) 
     intake, destination_zone_id: destinationZoneId, duration_minutes: durationMinutes,
     price_lines: lines.map((l) => ({ charge_type: l.charge_type, description: l.description, quantity: l.quantity, unit_price_paisa: l.unit_price_paisa, amount_paisa: l.amount_paisa })),
     total_paisa: lines.reduce((sum, l) => sum + l.amount_paisa, 0),
-    visit_charge_paisa: job.requires_authorization_check ? job.visit_charge_paisa : 0,
+    visit_charge_paisa: job.visit_charge_paisa,
     cancellation: 'Free cancellation before the provider arrives.',
   };
   const terms = {
@@ -341,6 +341,12 @@ export async function getBooking(db: Db, user: AuthUser, id: string) {
     };
   }
   if (staff) view.terms_snapshot = b.terms_snapshot;
+  const snap = b.terms_snapshot as { requires_authorization_check?: boolean; visit_charge_paisa?: number };
+  view.requires_authorization_check = !!snap.requires_authorization_check;
+  view.visit_charge_paisa = snap.visit_charge_paisa ?? 0;
+  if (snap.requires_authorization_check && (isAssignedProvider || staff || isCustomer)) {
+    view.authorization_check = await one(db, 'SELECT verified, method, note, created_at FROM authorization_checks WHERE booking_id = $1', [id]) ?? null;
+  }
   if (isCustomer || staff) {
     view.complaints = await many(db, `SELECT id, status, category, description, resolution, resolution_note, created_at, resolved_at
                                       FROM complaints WHERE booking_id = $1 ORDER BY created_at`, [id]);

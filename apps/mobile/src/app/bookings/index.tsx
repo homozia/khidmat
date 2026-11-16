@@ -2,6 +2,7 @@ import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, View } from 'react-native';
 import { api } from '@/lib/api';
+import { errorText } from '@/lib/errors';
 import { useI18n, useName } from '@/lib/i18n';
 import { Card, Notice, Row, StatusPill, T, when } from '@/lib/ui';
 
@@ -12,7 +13,7 @@ export default function MyBookings() {
   const name = useName();
   const [list, setList] = useState<any[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const load = useCallback(() => { api('GET', '/v1/bookings').then((r) => { setList(r); setError(null); }).catch((e) => setError(e.message)); }, []);
+  const load = useCallback(() => { api('GET', '/v1/bookings').then((r) => { setList(r); setError(null); }).catch((e) => setError(errorText(e, t))); }, [t]);
   useFocusEffect(load);
   return (
     <View style={{ flex: 1, padding: 16 }}>

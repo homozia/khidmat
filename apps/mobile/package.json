@@ -6,9 +6,12 @@
     "@react-native-async-storage/async-storage": "^2.2.0",
     "@react-native-community/netinfo": "^12.0.1",
     "expo": "~58.0.25",
+    "expo-application": "~58.1.2",
     "expo-audio": "~58.0.12",
+    "expo-build-properties": "~58.0.12",
     "expo-constants": "~58.0.16",
     "expo-crypto": "~58.0.8",
+    "expo-file-system": "~58.0.13",
     "expo-image-picker": "~58.0.10",
     "expo-linking": "~58.0.17",
     "expo-localization": "~58.0.5",
@@ -33,7 +36,9 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit -p .",
     "export:android": "expo export --platform android --output-dir dist-android",
-    "export:web": "expo export --platform web --output-dir dist-web"
+    "export:web": "expo export --platform web --output-dir dist-web",
+    "prebuild:fieldtest": "APP_VARIANT=fieldtest expo prebuild --platform android --clean --no-install",
+    "apk:fieldtest": "npm run prebuild:fieldtest && cd android && ./gradlew :app:assembleRelease --no-daemon"
   },
   "private": true
 }

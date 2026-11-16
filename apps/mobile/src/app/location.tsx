@@ -3,6 +3,7 @@ import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { FlatList, Pressable, View } from 'react-native';
 import { api } from '@/lib/api';
+import { errorText } from '@/lib/errors';
 import { useI18n, useName } from '@/lib/i18n';
 import { Button, C, Card, Input, Notice, T, usePlace } from '@/lib/ui';
 
@@ -33,7 +34,7 @@ export default function ChooseLocation() {
       if (r.status === 'outside') { setNearby(r.nearby); setMsg({ kind: 'err', text: t('We do not serve this area yet') }); return; }
       setPlace({ ...input, label, source, zone: r.zone });
       router.back();
-    } catch (e) { setMsg({ kind: 'err', text: (e as Error).message }); } finally { setBusy(false); }
+    } catch (e) { setMsg({ kind: 'err', text: errorText(e, t) }); } finally { setBusy(false); }
   };
 
   const useGps = async () => {

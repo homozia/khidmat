@@ -2,6 +2,7 @@ import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Pressable, ScrollView } from 'react-native';
 import { api } from '@/lib/api';
+import { errorText } from '@/lib/errors';
 import { useI18n, useName } from '@/lib/i18n';
 import { Card, Notice, T, usePlace } from '@/lib/ui';
 
@@ -17,7 +18,7 @@ export default function Category() {
   useEffect(() => {
     if (!place) return;
     const q = place.locality_id ? `locality_id=${place.locality_id}` : `lat=${place.lat}&lng=${place.lng}`;
-    api('GET', `/v1/catalogue?${q}`).then((r) => setCat(r.categories.find((c: any) => c.code === code))).catch((e) => setError(e.message));
+    api('GET', `/v1/catalogue?${q}`).then((r) => setCat(r.categories.find((c: any) => c.code === code))).catch((e) => setError(errorText(e, t)));
   }, [code, place]);
   return (
     <ScrollView contentContainerStyle={{ padding: 16 }}>

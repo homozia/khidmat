@@ -1,0 +1,19 @@
+# Local test stack: PostgreSQL 16 with PostGIS 3.4. The API and web run on the laptop with Node (see README).
+# Data is disposable: `docker compose down -v` deletes it.
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: khidmat
+      POSTGRES_PASSWORD: khidmat_dev
+      POSTGRES_DB: khidmat_dev
+    ports: ["5432:5432"]
+    volumes:
+      - db:/var/lib/postgresql/data
+      - ./scripts/db-init.sql:/docker-entrypoint-initdb.d/10-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U khidmat -d khidmat_dev"]
+      interval: 3s
+      retries: 20
+volumes:
+  db:

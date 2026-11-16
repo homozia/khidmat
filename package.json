@@ -20,7 +20,11 @@
     "verify": "npm run lint && npm run typecheck && npm test && npm run build:web",
     "build:web": "npm run build -w apps/web",
     "build:android-bundle": "npm run export:android -w apps/mobile",
-    "dev:web": "npm run dev -w apps/web"
+    "dev:web": "npm run dev -w apps/web",
+    "setup": "bash scripts/setup.sh",
+    "serve:web": "npm run build -w apps/web && npm run preview -w apps/web",
+    "lan:ip": "node scripts/lan-ip.mjs",
+    "apk:fieldtest": "npm run apk:fieldtest -w apps/mobile"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

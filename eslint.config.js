@@ -12,7 +12,15 @@ export default tseslint.config(
     },
   },
   {
-    files: ['apps/api/scripts/**'],
+    files: ['apps/api/scripts/**', 'scripts/**'],
+    languageOptions: { globals: { console: 'readonly', process: 'readonly' } },
     rules: { 'no-console': 'off' },
   },
+  {
+    // Expo config plugins are CommonJS, loaded by the Expo CLI.
+    files: ['apps/mobile/plugins/**/*.js'],
+    languageOptions: { sourceType: 'commonjs', globals: { require: 'readonly', module: 'writable' } },
+    rules: { '@typescript-eslint/no-require-imports': 'off' },
+  },
+  { ignores: ['**/android/**', '**/ios/**', 'out/**'] },
 );

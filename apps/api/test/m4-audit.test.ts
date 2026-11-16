@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import S3rver from 's3rver';
-import { bookAndAssign, client, freshApp, idem, ledgerOf, loginAll, newKey, pool, tomorrowAt, ids, JOB, LOCALITY, PROVIDER, ZONE, type Users } from './helpers.ts';
+import { bookAndAssign, client, freshApp, idem, ledgerOf, login, loginAll, newKey, pool, tomorrowAt, ids, JOB, LOCALITY, PROVIDER, ZONE, type Users } from './helpers.ts';
 import { config } from '../src/config.ts';
 import { resetSchema } from '../src/migrate.ts';
 import { sendViaAggregator, usesSandbox } from '../src/services/sms.ts';
@@ -78,6 +78,33 @@ describe('F1 duplicate bookings: one booking per submission in every retry scena
     expect(theirs.status).toBe(409); // the token belongs to the first customer
     expect(theirs.body.id).toBeUndefined();
     expect(mine.status).toBe(201);
+  });
+});
+
+describe('F2 media uploads are separate and safe to retry; sign-out ends the server session', () => {
+  let app: FastifyInstance; let u: Users;
+  const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(200, 1)]);
+  beforeAll(async () => { app = await freshApp(); u = await loginAll(app); });
+  afterAll(async () => { await app.close(); });
+
+  it('the same photo retried with its client reference is stored once', async () => {
+    const b = await u.customerIsb.post('/v1/bookings', tapLeak(), idem());
+    const send = (ref: string) => app.inject({ method: 'POST', url: `/v1/bookings/${b.body.id}/attachments?kind=photo&client_ref=${ref}`, payload: JPEG,
+      headers: { authorization: `Bearer ${u.customerIsb.token}`, 'content-type': 'image/jpeg' } });
+    const first = await send('photo-abc-0001');
+    const retry = await send('photo-abc-0001');
+    expect([first.statusCode, retry.statusCode]).toEqual([201, 200]);
+    expect(JSON.parse(retry.body).id).toBe(JSON.parse(first.body).id);
+    const together = await Promise.all([send('photo-abc-0002'), send('photo-abc-0002')]);
+    expect(new Set(together.map((r) => JSON.parse(r.body).id)).size).toBe(1);
+    expect((await u.customerIsb.get(`/v1/bookings/${b.body.id}/attachments`)).body).toHaveLength(2);
+  });
+
+  it('sign-out revokes the session on the server', async () => {
+    const c = await login(app, '+923001110001');
+    expect((await c.get('/v1/me')).status).toBe(200);
+    expect((await c.post('/v1/auth/logout')).status).toBe(204);
+    expect((await c.get('/v1/me')).status).toBe(401);
   });
 });
 

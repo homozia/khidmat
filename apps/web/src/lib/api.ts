@@ -6,11 +6,13 @@ export class ApiError extends Error {
   status: number;
   code: string;
   details?: unknown;
-  constructor(status: number, code: string, message: string, details?: unknown) {
+  requestId?: string;
+  constructor(status: number, code: string, message: string, details?: unknown, requestId?: string) {
     super(message);
     this.status = status;
     this.code = code;
     this.details = details;
+    this.requestId = requestId;
   }
 }
 
@@ -23,8 +25,11 @@ export function setToken(t: string | null) {
 }
 export const hasToken = () => !!token;
 
+/** randomUUID needs HTTPS or localhost; phones on the office Wi-Fi open the app over plain HTTP, so fall back to getRandomValues. */
 export function newIdempotencyKey(): string {
-  return `web-${crypto.randomUUID()}`;
+  if (typeof crypto.randomUUID === 'function') return `web-${crypto.randomUUID()}`;
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  return `web-${Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('')}`;
 }
 
 export async function api<T = any>(method: string, path: string, body?: unknown, opts: { idem?: string; raw?: Blob; rawType?: string } = {}): Promise<T> { // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -44,13 +49,17 @@ export async function api<T = any>(method: string, path: string, body?: unknown,
   const data = await res.json().catch(() => null);
   if (!res.ok) {
     if (res.status === 401) setToken(null);
-    throw new ApiError(res.status, data?.error?.code ?? 'ERROR', data?.error?.message ?? `Request failed (${res.status})`, data?.error?.details);
+    throw new ApiError(res.status, data?.error?.code ?? 'ERROR', data?.error?.message ?? `Request failed (${res.status})`, data?.error?.details,
+      data?.error?.request_id ?? res.headers.get('x-request-id') ?? undefined);
   }
   return data as T;
 }
 
 export const get = <T = any>(p: string) => api<T>('GET', p); // eslint-disable-line @typescript-eslint/no-explicit-any
 export const post = <T = any>(p: string, b: unknown = {}, idem?: string) => api<T>('POST', p, b, { idem }); // eslint-disable-line @typescript-eslint/no-explicit-any
+export const put = <T = any>(p: string, b: unknown = {}) => api<T>('PUT', p, b); // eslint-disable-line @typescript-eslint/no-explicit-any
+export const patch = <T = any>(p: string, b: unknown = {}) => api<T>('PATCH', p, b); // eslint-disable-line @typescript-eslint/no-explicit-any
+export const del = <T = any>(p: string) => api<T>('DELETE', p); // eslint-disable-line @typescript-eslint/no-explicit-any
 
 /** Opens a private file: asks the API for a short-lived signed link, then opens it. */
 export async function openSigned(path: string, body?: unknown) {

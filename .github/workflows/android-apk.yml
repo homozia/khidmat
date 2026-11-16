@@ -1,0 +1,72 @@
+# Builds the signed field-test APK (Khidmat TEST) on demand.
+# Signing material lives only in repository secrets:
+#   KHIDMAT_KEYSTORE_BASE64   base64 of the upload keystore (.jks)
+#   KHIDMAT_KEYSTORE_PASSWORD, KHIDMAT_KEY_ALIAS, KHIDMAT_KEY_PASSWORD
+# Optional repository variable KHIDMAT_TEST_API_URL pre-fills the server address (testers can change it in the app).
+name: Field-test APK
+on:
+  workflow_dispatch:
+    inputs:
+      version_code:
+        description: Android versionCode (raise it for every APK you hand out)
+        required: true
+        default: '4'
+permissions: { contents: read }
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      APP_VARIANT: fieldtest
+      KHIDMAT_VERSION_CODE: ${{ inputs.version_code }}
+      EXPO_PUBLIC_API_URL: ${{ vars.KHIDMAT_TEST_API_URL }}
+      EXPO_NO_TELEMETRY: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22.18, cache: npm }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: android-actions/setup-android@v3
+      - run: npm ci
+
+      - name: Generate the native Android project
+        working-directory: apps/mobile
+        run: npx expo prebuild --platform android --clean --no-install
+
+      - name: Write the keystore from secrets
+        env: { KS: '${{ secrets.KHIDMAT_KEYSTORE_BASE64 }}' }
+        run: |
+          test -n "$KS" || { echo "::error::KHIDMAT_KEYSTORE_BASE64 secret is not set"; exit 1; }
+          echo "$KS" | base64 -d > "$RUNNER_TEMP/upload.jks"
+          echo "KHIDMAT_KEYSTORE_PATH=$RUNNER_TEMP/upload.jks" >> "$GITHUB_ENV"
+
+      - name: Build the release APK (JavaScript bundle embedded, no Metro needed)
+        working-directory: apps/mobile/android
+        env:
+          KHIDMAT_KEYSTORE_PASSWORD: ${{ secrets.KHIDMAT_KEYSTORE_PASSWORD }}
+          KHIDMAT_KEY_ALIAS: ${{ secrets.KHIDMAT_KEY_ALIAS }}
+          KHIDMAT_KEY_PASSWORD: ${{ secrets.KHIDMAT_KEY_PASSWORD }}
+        run: ./gradlew :app:assembleRelease --no-daemon --stacktrace
+
+      - name: Verify signature, bundle and manifest; write checksums
+        run: |
+          set -euo pipefail
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          APK=apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          mkdir -p out && cp "$APK" out/khidmat-m4-field-test.apk
+          cd out
+          "$BT/apksigner" verify --verbose --print-certs khidmat-m4-field-test.apk | tee apksigner.txt
+          grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" apksigner.txt
+          if grep -q "CN=Android Debug" apksigner.txt; then echo "::error::APK is signed with the debug key"; exit 1; fi
+          "$BT/aapt2" dump badging khidmat-m4-field-test.apk | grep -E "^(package|sdkVersion|targetSdkVersion|application-label):" | tee badging.txt
+          unzip -l khidmat-m4-field-test.apk | grep -E "assets/index.android.bundle" | tee bundle.txt
+          test -s bundle.txt || { echo "::error::JavaScript bundle is missing from the APK"; exit 1; }
+          sha256sum khidmat-m4-field-test.apk | tee khidmat-m4-field-test.apk.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: khidmat-m4-field-test
+          path: out/
+          retention-days: 30

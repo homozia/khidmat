@@ -1,7 +1,9 @@
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, View } from 'react-native';
-import { api, clearPending, getPending, submitPending, type PendingBooking } from '@/lib/api';
+import { api } from '@/lib/api';
+import { OutboxCard } from '@/components/OutboxCard';
+import { errorText } from '@/lib/errors';
 import { useI18n, useName } from '@/lib/i18n';
 import { Button, C, Card, Notice, Row, T, usePlace } from '@/lib/ui';
 import { useSession } from '@/lib/session';
@@ -15,32 +17,20 @@ export default function Home() {
   const { signOut } = useSession();
   const [cats, setCats] = useState<any[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState<PendingBooking | null>(null);
-  const [sending, setSending] = useState(false);
+  const [tick, setTick] = useState(0);
 
   const load = useCallback(async () => {
-    setPending(await getPending());
+    setTick((n) => n + 1);
     if (!place) return;
     const q = place.locality_id ? `locality_id=${place.locality_id}` : `lat=${place.lat}&lng=${place.lng}`;
-    try { setCats((await api('GET', `/v1/catalogue?${q}`)).categories); setError(null); } catch (e) { setError((e as Error).message); }
-  }, [place]);
+    try { setCats((await api('GET', `/v1/catalogue?${q}`)).categories); setError(null); } catch (e) { setError(errorText(e, t)); }
+  }, [place, t]);
   useEffect(() => { void load(); }, [load]);
+  useFocusEffect(useCallback(() => { setTick((n) => n + 1); }, []));
 
   return (
     <ScrollView contentContainerStyle={{ padding: 16 }} refreshControl={<RefreshControl refreshing={false} onRefresh={load} />}>
-      {pending && (
-        <Card style={{ borderColor: C.wait }}>
-          <T style={{ fontWeight: '600' }}>{t('You have a booking that was not sent')}</T>
-          <Row>
-            <Button title={t('Send again')} busy={sending} onPress={async () => {
-              setSending(true);
-              try { const r = await submitPending(pending); setPending(null); router.push(`/bookings/${r.booking.id}`); }
-              catch (e) { setError((e as Error).message); } finally { setSending(false); }
-            }} />
-            <Button kind="secondary" title={t('Discard')} onPress={async () => { await clearPending(); setPending(null); }} />
-          </Row>
-        </Card>
-      )}
+      <OutboxCard key={tick} />
       <Pressable accessibilityRole="button" onPress={() => router.push('/location')}>
         <Card>
           <T variant="small">{t('Your location')}</T>

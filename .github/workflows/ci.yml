@@ -1,0 +1,32 @@
+name: CI
+on:
+  push: { branches: [main] }
+  pull_request:
+permissions: { contents: read }
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      db:
+        image: postgis/postgis:16-3.4
+        env: { POSTGRES_USER: khidmat, POSTGRES_PASSWORD: khidmat_dev, POSTGRES_DB: khidmat_test }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U khidmat -d khidmat_test" --health-interval 3s --health-retries 20
+    env:
+      DATABASE_URL: postgres://khidmat:khidmat_dev@localhost:5432/khidmat_test
+      TEST_DATABASE_URL: postgres://khidmat:khidmat_dev@localhost:5432/khidmat_test
+      APP_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22.18, cache: npm }
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build:web
+      - name: Customer app JavaScript bundle (Android)
+        run: npm run build:android-bundle

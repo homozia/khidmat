@@ -38,6 +38,7 @@ export function client(app: FastifyInstance, token?: string) {
     return { status: res.statusCode, body: res.body ? JSON.parse(res.body) : null };
   };
   return {
+    token,
     get: (url: string) => call('GET', url),
     post: (url: string, body: unknown = {}, headers?: Record<string, string>) => call('POST', url, body, headers),
     put: (url: string, body: unknown = {}) => call('PUT', url, body),

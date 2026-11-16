@@ -1,7 +1,9 @@
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView } from 'react-native';
+import { OutboxCard } from '@/components/OutboxCard';
 import { api } from '@/lib/api';
+import { errorText, supportRef } from '@/lib/errors';
 import { useI18n, useName } from '@/lib/i18n';
 import { Button, C, Card, Input, Journey, Notice, pkr, Row, StatusPill, T, when } from '@/lib/ui';
 
@@ -15,7 +17,7 @@ export default function BookingScreen() {
   const name = useName();
   const [b, setB] = useState<any>(null);
   const [receipt, setReceipt] = useState<any>(null);
-  const [msg, setMsg] = useState<{ kind: 'ok' | 'err' | 'wait'; text: string } | null>(media === 'failed' ? { kind: 'wait', text: t('Some photos could not be uploaded. The booking is saved.') } : null);
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'err' | 'wait'; text: string; ref?: string | null } | null>(null);
   const [busy, setBusy] = useState(false);
   const [rating, setRating] = useState(0);
   const [complaint, setComplaint] = useState<{ open: boolean; category: string; text: string }>({ open: false, category: 'quality', text: '' });
@@ -26,13 +28,13 @@ export default function BookingScreen() {
       const d = await api('GET', `/v1/bookings/${id}`);
       setB(d);
       if (['completed', 'closed'].includes(d.status)) setReceipt(await api('GET', `/v1/bookings/${id}/receipt`));
-    } catch (e) { setMsg({ kind: 'err', text: (e as Error).message }); }
-  }, [id]);
+    } catch (e) { setMsg({ kind: 'err', text: errorText(e, t), ref: supportRef(e) }); }
+  }, [id, t]);
   useEffect(() => { void load(); const h = setInterval(load, 20000); return () => clearInterval(h); }, [load]);
 
   const act = async (fn: () => Promise<unknown>, ok?: string) => {
     setBusy(true); setMsg(null);
-    try { await fn(); if (ok) setMsg({ kind: 'ok', text: ok }); await load(); } catch (e) { setMsg({ kind: 'err', text: (e as Error).message }); } finally { setBusy(false); }
+    try { await fn(); if (ok) setMsg({ kind: 'ok', text: ok }); await load(); } catch (e) { setMsg({ kind: 'err', text: errorText(e, t), ref: supportRef(e) }); } finally { setBusy(false); }
   };
 
   if (!b) return <ScrollView contentContainerStyle={{ padding: 16 }}>{msg && <Notice kind={msg.kind} text={msg.text} />}</ScrollView>;
@@ -45,6 +47,8 @@ export default function BookingScreen() {
       <Row style={{ justifyContent: 'space-between' }}><T variant="title" style={{ flex: 1 }}>{name(b.job)}</T><StatusPill status={b.status} /></Row>
       <T variant="muted">{when(b.scheduled_start)}</T>
       {msg && <Notice kind={msg.kind} text={msg.text} />}
+      {msg?.ref && <T variant="small">{t('Support reference')}: {msg.ref}</T>}
+      {media === 'pending' && <OutboxCard />}
       {b.status === 'no_provider' && <Notice kind="err" text={t('We could not find a provider for this time. Call us or choose another time.')} />}
       <Journey status={b.status} />
 
@@ -70,10 +74,12 @@ export default function BookingScreen() {
             .filter(([, v]) => v > 0).map(([k, v]) => <Row key={k} style={{ justifyContent: 'space-between' }}><T>{t(k)}</T><T>{pkr(v)}</T></Row>)}
           <Row style={{ justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: C.line, paddingTop: 6, marginTop: 6 }}><T style={{ fontWeight: '600' }}>{t('Total')}</T><T style={{ fontWeight: '600' }}>{pkr(receipt.total_paisa)}</T></Row>
           {receipt.refunded_paisa > 0 && <Row style={{ justifyContent: 'space-between' }}><T>{t('Refunded')}</T><T>-{pkr(receipt.refunded_paisa)}</T></Row>}
+          {receipt.refund_owed_paisa > 0 && <Row style={{ justifyContent: 'space-between' }}><T>{t('Refund owed to you')}</T><T>{pkr(receipt.refund_owed_paisa)}</T></Row>}
+          <T variant="small" style={{ marginTop: 6 }}>{receipt.payment_status === 'provider_reported' ? t('Cash payment: waiting for your confirmation') : t('Cash payment confirmed')}</T>
           <T variant="small">{b.ref} · {when(receipt.completed_at)}</T>
         </Card>
       )}
-      {b.status === 'completed' && <Button title={t('I paid in cash')} busy={busy} onPress={() => act(() => api('POST', `/v1/bookings/${id}/confirm-payment`))} />}
+      {receipt?.payment_status === 'provider_reported' && <Button title={t('I paid in cash')} busy={busy} onPress={() => act(() => api('POST', `/v1/bookings/${id}/confirm-payment`))} />}
 
       {['completed', 'closed'].includes(b.status) && !b.review && (
         <Card>

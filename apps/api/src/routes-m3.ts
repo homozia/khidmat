@@ -29,9 +29,11 @@ export function registerM3Routes(app: FastifyInstance) {
   // ---- Files ----
   app.post('/v1/bookings/:id/attachments', async (req, reply) => {
     const u = need(req);
-    const { kind } = z.object({ kind: z.enum(['photo', 'voice', 'completion_photo', 'lockout_proof']) }).parse(req.query);
+    const { kind, client_ref } = z.object({ kind: z.enum(['photo', 'voice', 'completion_photo', 'lockout_proof']),
+      client_ref: z.string().regex(/^[A-Za-z0-9_-]{8,80}$/).optional() }).parse(req.query);
     const { buf, type } = binary(req);
-    return reply.status(201).send(await tx((c) => addAttachment(c, u, Uuid.parse(req.params).id, kind, type, buf)));
+    const r = await tx((c) => addAttachment(c, u, Uuid.parse(req.params).id, kind, type, buf, client_ref));
+    return reply.status('replayed' in r ? 200 : 201).send(r);
   });
   app.get('/v1/bookings/:id/attachments', async (req) => listAttachments(pool, need(req), Uuid.parse(req.params).id));
   app.get('/v1/attachments/:id/url', async (req) => attachmentUrl(pool, need(req), Uuid.parse(req.params).id));
