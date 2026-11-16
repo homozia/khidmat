@@ -14,6 +14,10 @@ on:
         description: Android versionCode. Must be higher than the last APK you handed out (M4 = 4, M4.1 = 5).
         required: true
         default: '5'
+      dry_run:
+        description: Build check only, without the signing key. Nothing installable is uploaded.
+        type: boolean
+        default: false
 permissions: { contents: read }
 
 env:
@@ -45,6 +49,7 @@ jobs:
       - run: npm ci
 
       - name: Check the signing secrets are present
+        if: ${{ !inputs.dry_run }}
         env:
           KS: ${{ secrets.KHIDMAT_KEYSTORE_BASE64 }}
           P1: ${{ secrets.KHIDMAT_KEYSTORE_PASSWORD }}
@@ -75,6 +80,7 @@ jobs:
       - name: Verify signature, package, version, bundle and checksum
         env:
           EXPECTED_CERT: ${{ vars.KHIDMAT_CERT_SHA256 }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
@@ -82,9 +88,10 @@ jobs:
           cd out
           "$BT/apksigner" verify --verbose --print-certs "$APK_NAME" | tee apksigner.txt
           grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" apksigner.txt || { echo "::error::APK is not v2-signed"; exit 1; }
-          if grep -q "CN=Android Debug" apksigner.txt; then echo "::error::APK is signed with the debug key"; exit 1; fi
+          if [ "${DRY_RUN}" = "true" ]; then echo "Dry run: debug-signed build, signature-key checks skipped"; else
+          if grep -q "CN=Android Debug" apksigner.txt; then echo "::error::APK is signed with the debug key"; exit 1; fi; fi
           CERT=$(grep -m1 "certificate SHA-256 digest" apksigner.txt | awk '{print $NF}')
-          if [ -n "${EXPECTED_CERT:-}" ]; then
+          if [ -n "${EXPECTED_CERT:-}" ] && [ "${DRY_RUN}" != "true" ]; then
             want=$(echo "$EXPECTED_CERT" | tr -d ': ' | tr 'A-F' 'a-f')
             [ "$CERT" = "$want" ] || { echo "::error::Signed with a different key ($CERT); installed test builds could not update in place"; exit 1; }
           fi
@@ -104,6 +111,7 @@ jobs:
           rm -f badging-full.txt "$RUNNER_TEMP/upload.jks"
 
       - uses: actions/upload-artifact@v4
+        if: ${{ !inputs.dry_run }}
         with:
           name: khidmat-m4.1-field-test
           path: out/
