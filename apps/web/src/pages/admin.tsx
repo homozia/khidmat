@@ -507,8 +507,8 @@ function Catalogue() {
             </div>
           </div>
           {open === c.id && (
-            <table style={{ marginTop: '.6rem' }}><thead><tr><th>Job</th><th>Booking</th><th className="money">Price</th><th>Areas</th><th>Status</th><th /></tr></thead>
-              <tbody>{c.jobs.map((j: any) => <JobRow key={j.id} j={j} zones={zones.data ?? []} onChange={cat.reload} />)}</tbody></table>
+            <div className="table-wrap"><table style={{ marginTop: '.6rem' }}><thead><tr><th>Job</th><th>Booking</th><th className="money">Price</th><th>Areas</th><th>Status</th><th /></tr></thead>
+              <tbody>{c.jobs.map((j: any) => <JobRow key={j.id} j={j} zones={zones.data ?? []} onChange={cat.reload} />)}</tbody></table></div>
           )}
         </div>
       ))}

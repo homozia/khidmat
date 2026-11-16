@@ -43,7 +43,7 @@ wlan0: 192.168.1.20
 
 You can also find the address yourself. On Windows, run `ipconfig` and read the "IPv4 Address" under Wi-Fi. On macOS, go to System Settings → Wi-Fi → Details → IP address.
 
-Open the health check address in the **phone's** browser. If it shows `{"status":"ok"…}`, the phone can reach the laptop. If it doesn't load, allow Node.js through the laptop firewall, which Windows asks about the first time, and check that both devices are on the same Wi-Fi.
+Open the health check address in the **phone's** browser. If it shows `{"ok":true,…}`, the phone can reach the laptop. If it doesn't load, allow Node.js through the laptop firewall, which Windows asks about the first time, and check that both devices are on the same Wi-Fi.
 
 To start again with clean test data: `npm run db:reset`. Resets only work on databases whose names end in `_dev`, `_test` or `_sandbox`.
 

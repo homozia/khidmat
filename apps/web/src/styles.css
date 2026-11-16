@@ -108,12 +108,12 @@ dl.facts dd { margin: 0; }
 .brand { font-weight: 600; font-size: 1.1rem; color: var(--primary); text-decoration: none; }
 .topbar .spacer { flex: 1; }
 .topbar select { width: auto; min-height: 36px; }
-.layout { display: grid; grid-template-columns: 13rem 1fr; min-height: calc(100vh - 58px); }
+.layout { display: grid; grid-template-columns: 13rem minmax(0, 1fr); min-height: calc(100vh - 58px); }
 .sidenav { border-inline-end: 1px solid var(--line); background: var(--surface); padding: 1rem .5rem; }
 .sidenav a { display: block; padding: .55rem .8rem; border-radius: var(--radius-control); color: var(--ink); text-decoration: none; }
 .sidenav a[aria-current='page'] { background: var(--primary-soft); color: var(--primary); font-weight: 600; }
 .sidenav .group { margin: 1rem .8rem .3rem; font-size: .85rem; color: var(--muted); }
-main.content { padding: 1.5rem; max-width: 1200px; width: 100%; }
+main.content { padding: 1.5rem; max-width: 1200px; width: 100%; min-width: 0; }
 
 /* Provider portal: one column, phone first */
 .mobile { max-width: 34rem; margin: 0 auto; padding: 1rem 1rem 6rem; }
@@ -131,7 +131,7 @@ main.content { padding: 1.5rem; max-width: 1200px; width: 100%; }
 .zone-shape { width: 100%; max-width: 220px; height: auto; background: var(--primary-soft); border-radius: var(--radius-control); }
 
 @media (max-width: 760px) {
-  .layout { grid-template-columns: 1fr; }
+  .layout { grid-template-columns: minmax(0, 1fr); }
   .sidenav { display: flex; overflow-x: auto; padding: .4rem; border-inline-end: none; border-bottom: 1px solid var(--line); }
   .sidenav .group { display: none; }
   .sidenav a { white-space: nowrap; }
