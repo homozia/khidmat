@@ -96,11 +96,11 @@ jobs:
             [ "$CERT" = "$want" ] || { echo "::error::Signed with a different key ($CERT); installed test builds could not update in place"; exit 1; }
           fi
           "$BT/aapt2" dump badging "$APK_NAME" > badging-full.txt
-          grep -E "^(package|sdkVersion|targetSdkVersion|application-label):" badging-full.txt | tee badging.txt
+          grep -E "^(package|sdkVersion|minSdkVersion|targetSdkVersion|application-label):" badging-full.txt | tee badging.txt
           grep -q "package: name='$EXPECTED_PACKAGE'" badging.txt || { echo "::error::Wrong package id"; exit 1; }
           grep -q "versionCode='$KHIDMAT_VERSION_CODE'" badging.txt || { echo "::error::Wrong versionCode"; exit 1; }
           grep -q "versionName='$EXPECTED_VERSION'" badging.txt || { echo "::error::Wrong versionName"; exit 1; }
-          grep -q "sdkVersion:'24'" badging.txt || { echo "::error::Minimum Android is not 7.0 (API 24)"; exit 1; }
+          grep -qE "^(min)?[sS]dkVersion:'24'" badging.txt || { echo "::error::Minimum Android is not 7.0 (API 24)"; exit 1; }
           unzip -l "$APK_NAME" | grep -E "assets/index.android.bundle" | tee bundle.txt
           test -s bundle.txt || { echo "::error::JavaScript bundle is missing from the APK"; exit 1; }
           sha256sum "$APK_NAME" | tee "$APK_NAME.sha256"

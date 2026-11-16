@@ -75,7 +75,7 @@ To turn a keystore into base64 on Windows (PowerShell, in the keystore's folder)
 
 ```
 package: name='pk.khidmat.customer.fieldtest' versionCode='5' versionName='0.4.1' …
-sdkVersion:'24'
+minSdkVersion:'24'
 application-label:'Khidmat TEST'
 certificate SHA-256: 594f9b8e…c445b6
 <sha256>  khidmat-m4.1-field-test.apk
