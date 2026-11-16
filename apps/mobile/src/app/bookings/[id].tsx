@@ -6,7 +6,7 @@ import { api } from '@/lib/api';
 import { setCurrentBookingRef } from '@/lib/diagnostics';
 import { errorText } from '@/lib/errors';
 import { useI18n, useName } from '@/lib/i18n';
-import { Button, C, Card, Input, Journey, Notice, pkr, Row, StatusPill, T, when } from '@/lib/ui';
+import { Button, C, Card, Input, Journey, ltr, Notice, pkr, Row, StatusPill, T, when } from '@/lib/ui';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -37,6 +37,7 @@ export default function BookingScreen() {
   const [rating, setRating] = useState(0);
   const [complaint, setComplaint] = useState<{ open: boolean; category: string; text: string }>({ open: false, category: 'quality', text: '' });
   const [cancelReason, setCancelReason] = useState('');
+  const [cancelOpen, setCancelOpen] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -63,7 +64,7 @@ export default function BookingScreen() {
       <Row style={{ justifyContent: 'space-between' }}><T variant="title" style={{ flex: 1 }}>{name(b.job)}</T><StatusPill status={b.status} /></Row>
       <T variant="muted">{when(b.scheduled_start)}</T>
       {msg && <Notice kind={msg.kind} text={msg.text} />}
-      {created === '1' && <Notice kind="ok" text={`${t('Booking received')}: ${b.ref}`} />}
+      {created === '1' && <Notice kind="ok" text={`${t('Booking received')}: ${ltr(b.ref)}`} />}
       <Card style={{ backgroundColor: C.primarySoft, borderColor: C.primarySoft }}>
         <T variant="small">{t('What happens next')}</T>
         <T>{t(NEXT_STEP[b.status] ?? '')}</T>
@@ -126,12 +127,16 @@ export default function BookingScreen() {
         ) : <Button kind="link" title={t('Report a problem')} onPress={() => setComplaint({ ...complaint, open: true })} />
       )}
 
-      {canCancel && (
+      {canCancel && (cancelOpen ? (
         <Card>
+          <T variant="small">{t('Free cancellation before the provider arrives.')}</T>
           <Input label={t('Reason for cancelling')} value={cancelReason} onChangeText={setCancelReason} />
-          <Button kind="danger" title={t('Cancel booking')} disabled={cancelReason.trim().length < 2} busy={busy} onPress={() => act(() => api('POST', `/v1/bookings/${id}/cancel`, { reason: cancelReason.trim() }))} />
+          <Row>
+            <Button kind="danger" title={t('Cancel booking')} disabled={cancelReason.trim().length < 2} busy={busy} onPress={() => act(() => api('POST', `/v1/bookings/${id}/cancel`, { reason: cancelReason.trim() }))} />
+            <Button kind="secondary" title={t('Keep booking')} onPress={() => setCancelOpen(false)} />
+          </Row>
         </Card>
-      )}
+      ) : <Button kind="link" title={t('Cancel this booking')} onPress={() => setCancelOpen(true)} />)}
     </ScrollView>
   );
 }

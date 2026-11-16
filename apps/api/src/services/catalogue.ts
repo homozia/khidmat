@@ -1,3 +1,4 @@
+import { config } from '../config.ts';
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { many, one, type Db } from '../db.ts';
@@ -13,13 +14,20 @@ export async function catalogueForZone(db: Db, zoneId: string) {
               'needs_destination', j.needs_destination, 'requires_authorization_check', j.requires_authorization_check,
               'visit_charge_paisa', j.visit_charge_paisa, 'duration_field_key', j.duration_field_key,
               'description_en', j.description_en, 'description_ur', j.description_ur,
+              -- Starting price shown in the service list: the same rule the booking preview uses (no travel or extras).
+              'from_price_paisa', (SELECT CASE WHEN 'fixed' = ANY(j.booking_modes) THEN nullif(pr.base_labour_paisa, 0)
+                                               WHEN 'inspection' = ANY(j.booking_modes) THEN nullif(pr.inspection_fee_paisa, 0) END
+                                   FROM pricing_rules pr WHERE pr.job_id = j.id AND (pr.zone_id IS NULL OR pr.zone_id = $1)
+                                     AND pr.effective_from <= now() AND (pr.effective_to IS NULL OR pr.effective_to > now())
+                                     AND (NOT pr.is_demo OR $2::boolean)
+                                   ORDER BY (pr.zone_id IS NOT NULL) DESC, pr.effective_from DESC LIMIT 1),
               'fields', coalesce((SELECT json_agg(json_build_object('key', f.key, 'type', f.field_type, 'label_en', f.label_en,
                  'label_ur', f.label_ur, 'required', f.required, 'min', f.min_value, 'max', f.max_value, 'options', f.options) ORDER BY f.display_order)
                  FROM job_intake_fields f WHERE f.job_id = j.id), '[]')) AS job
      FROM categories c JOIN jobs j ON j.category_id = c.id
      JOIN job_zone_availability a ON a.job_id = j.id AND a.zone_id = $1 AND a.status = 'enabled'
      WHERE c.status = 'active' AND j.status = 'active'
-     ORDER BY c.display_order, c.id, j.display_order, j.id`, [zoneId]);
+     ORDER BY c.display_order, c.id, j.display_order, j.id`, [zoneId, config.APP_ENV !== 'production']);
   const cats = new Map<string, { id: string; code: string; name_en: string; name_ur: string; jobs: unknown[] }>();
   for (const r of rows) {
     if (!cats.has(r.cat_id)) cats.set(r.cat_id, { id: r.cat_id, code: r.cat_code, name_en: r.cat_en, name_ur: r.cat_ur, jobs: [] });
@@ -85,5 +93,7 @@ export async function searchPlaces(db: Db, q: string) {
      FROM place_aliases a JOIN regions r ON r.id = a.region_id AND r.level = 'locality' AND r.status = 'active'
      LEFT JOIN regions p ON p.id = r.parent_id
      WHERE a.normalized LIKE $1 || '%' OR a.normalized LIKE '% ' || $1 || '%'
+        -- "g10", "G10" and "g 10" all find G-10: also compare with the spaces removed
+        OR replace(a.normalized, ' ', '') LIKE replace($1, ' ', '') || '%'
      ORDER BY r.id LIMIT 20`, [norm]);
 }

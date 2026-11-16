@@ -17,15 +17,21 @@ export default function ChooseLocation() {
   const { setPlace } = usePlace();
   const [q, setQ] = useState('');
   const [results, setResults] = useState<any[]>([]); // eslint-disable-line @typescript-eslint/no-explicit-any
+  const [searched, setSearched] = useState<string | null>(null); // the query the current results belong to
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'err' | 'wait'; text: string } | null>(null);
   const [nearby, setNearby] = useState<any[] | null>(null); // eslint-disable-line @typescript-eslint/no-explicit-any
 
   useEffect(() => {
-    if (q.trim().length < 2) { setResults([]); return; }
-    const h = setTimeout(() => { api('GET', `/v1/places?q=${encodeURIComponent(q)}`).then(setResults).catch(() => setResults([])); }, 250);
+    if (q.trim().length < 2) { setResults([]); setSearched(null); return; }
+    const h = setTimeout(() => {
+      api('GET', `/v1/places?q=${encodeURIComponent(q)}`)
+        .then((r) => { setResults(r); setSearched(q); setSearchError(null); })
+        .catch((e) => { setResults([]); setSearched(q); setSearchError(errorText(e, t)); });
+    }, 250);
     return () => clearTimeout(h);
-  }, [q]);
+  }, [q, t]);
 
   const check = async (input: { lat?: number; lng?: number; locality_id?: string }, label: string, source: 'gps' | 'area') => {
     setBusy(true); setMsg(null); setNearby(null);
@@ -57,6 +63,10 @@ export default function ChooseLocation() {
       {nearby && nearby.length > 0 && <T variant="muted">{t('Areas we serve nearby:')} {nearby.map((z) => name(z)).join(', ')}</T>}
       <View style={{ height: 16 }} />
       <Input label={t('Choose my area')} placeholder={t('Search area, e.g. G-10 or Satellite Town')} value={q} onChangeText={setQ} autoCorrect={false} />
+      {searchError && <Notice kind="err" text={searchError} />}
+      {!searchError && searched === q && results.length === 0 && (
+        <Notice kind="wait" text={t('No area matches. Try another spelling, for example G-10, F-10 or Satellite Town.')} />
+      )}
       <FlatList data={results} keyExtractor={(r) => r.id} keyboardShouldPersistTaps="handled" renderItem={({ item }) => (
         <Pressable accessibilityRole="button" onPress={() => check({ locality_id: item.id }, `${name(item)}, ${name(item, 'city')}`, 'area')}>
           <Card style={{ paddingVertical: 12 }}>

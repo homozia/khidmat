@@ -11,7 +11,7 @@ import { Platform } from 'react-native';
  */
 export type Variant = 'development' | 'fieldtest' | 'staging' | 'production';
 const extra = (Constants.expoConfig?.extra ?? {}) as { variant?: Variant; apiUrl?: string };
-export const VARIANT: Variant = extra.variant ?? 'development';
+export const VARIANT: Variant = extra.variant ?? (process.env.EXPO_PUBLIC_APP_VARIANT as Variant | undefined) ?? 'development';
 export const CAN_CHANGE_SERVER = VARIANT === 'fieldtest' || VARIANT === 'development';
 
 const DEFAULT_URL = extra.apiUrl || process.env.EXPO_PUBLIC_API_URL || (Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000');

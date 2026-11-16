@@ -7,11 +7,14 @@ export const C = {
   primary: '#1F5C99', primarySoft: '#E6EEF7', wait: '#A86A12', waitSoft: '#FBF1E1', good: '#2F7D4F', goodSoft: '#E5F2EA', bad: '#B23A3A', badSoft: '#F8E6E6',
 };
 
+/** Keeps numbers, amounts, references and addresses left-to-right inside Urdu text (Unicode isolate marks). */
+export const ltr = (s: string) => `\u2066${s}\u2069`;
+
 export function pkr(paisa: number | null | undefined) {
   const p = Number(paisa ?? 0);
   const abs = Math.abs(p);
   const frac = abs % 100;
-  return `${p < 0 ? '-' : ''}Rs ${Math.floor(abs / 100).toLocaleString('en-US')}${frac ? '.' + String(frac).padStart(2, '0') : ''}`;
+  return ltr(`${p < 0 ? '-' : ''}Rs ${Math.floor(abs / 100).toLocaleString('en-US')}${frac ? '.' + String(frac).padStart(2, '0') : ''}`);
 }
 export function when(iso?: string | null) {
   if (!iso) return '';
@@ -45,7 +48,7 @@ export function Input(props: TextInputProps & { label: string; hint?: string; er
       <T style={{ fontWeight: '500', marginBottom: 4 }}>{label}</T>
       <TextInput placeholderTextColor={C.muted} accessibilityLabel={label} {...rest}
         style={[s.input, { textAlign: rtl && !props.keyboardType ? 'right' : 'left' }, error ? { borderColor: C.bad } : null, style]} />
-      {hint && !error && <T variant="small">{hint}</T>}
+      {hint && !error && <T variant="small">{rest.keyboardType && rest.keyboardType !== 'default' ? ltr(hint) : hint}</T>}
       {error && <T variant="small" style={{ color: C.bad }}>{error}</T>}
     </View>
   );

@@ -30,7 +30,7 @@ function Screens() {
   return (
     <Stack screenOptions={{ headerStyle: { backgroundColor: C.surface }, headerTintColor: C.ink, contentStyle: { backgroundColor: C.bg },
       ...(CAN_CHANGE_SERVER && { headerRight: () => <ReportButton /> }) }}>
-      <Stack.Protected guard={signedIn}>
+      <Stack.Protected guard={signedIn} redirectTo="/sign-in">
         <Stack.Screen name="index" options={{ title: t('Khidmat') }} />
         <Stack.Screen name="location" options={{ title: t('Your location') }} />
         <Stack.Screen name="category/[code]" options={{ title: '' }} />
@@ -38,7 +38,7 @@ function Screens() {
         <Stack.Screen name="bookings/index" options={{ title: t('My bookings') }} />
         <Stack.Screen name="bookings/[id]" options={{ title: '' }} />
       </Stack.Protected>
-      <Stack.Protected guard={!signedIn}>
+      <Stack.Protected guard={!signedIn} redirectTo="/">
         <Stack.Screen name="sign-in" options={{ title: t('Khidmat') }} />
       </Stack.Protected>
       <Stack.Screen name="server" options={{ title: t('Test server') }} />

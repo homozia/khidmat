@@ -7,7 +7,7 @@ import { errorText } from '@/lib/errors';
 import { checkServer, type HealthResult } from '@/lib/health';
 import { TEST_CODE_HINT, TEST_CUSTOMERS } from '@/lib/testAccounts';
 import { useI18n } from '@/lib/i18n';
-import { Button, C, Card, Input, Notice, Row, T } from '@/lib/ui';
+import { Button, C, Card, Input, ltr, Notice, Row, T } from '@/lib/ui';
 import { useSession } from '@/lib/session';
 
 export default function SignIn() {
@@ -42,7 +42,7 @@ export default function SignIn() {
           value={phone} onChangeText={setPhone} editable={!sent} />
         {sent && (
           <>
-            <T variant="muted">{t('We sent a 6-digit code to')} {phone}</T>
+            <T variant="muted">{t('We sent a 6-digit code to')} {ltr(phone)}</T>
             <Input label={t('Code')} keyboardType="number-pad" autoComplete="sms-otp" textContentType="oneTimeCode" maxLength={6} value={code} onChangeText={setCode} autoFocus />
           </>
         )}
@@ -62,7 +62,7 @@ export default function SignIn() {
             <T variant="h2">{t('Test accounts')}</T>
             <T variant="small">{t('Test server only. No SMS is sent; the code is')} {TEST_CODE_HINT}.</T>
             {TEST_CUSTOMERS.map((a) => (
-              <Button key={a.phone} kind="secondary" title={`${a.phone} · ${lang === 'ur' ? a.name_ur : a.name_en}`} onPress={() => setPhone(a.phone)} />
+              <Button key={a.phone} kind="secondary" title={`${ltr(a.phone)} · ${lang === 'ur' ? a.name_ur : a.name_en}`} onPress={() => setPhone(a.phone)} />
             ))}
             <T variant="small">{t('Provider and staff accounts sign in on the website. See the role card in PHONE_TEST_CHECKLIST.md.')}</T>
           </Card>
@@ -70,7 +70,7 @@ export default function SignIn() {
         <Button kind="link" title={lang === 'ur' ? 'English' : 'اردو'} onPress={() => setLang(lang === 'ur' ? 'en' : 'ur')} />
         {CAN_CHANGE_SERVER && (
           <>
-            <Button kind="link" title={`${t('Test server')}: ${apiUrl().replace(/^https?:\/\//, '')}`} onPress={() => router.push('/server')} />
+            <Button kind="link" title={`${t('Test server')}: ${ltr(apiUrl().replace(/^https?:\/\//, ''))}`} onPress={() => router.push('/server')} />
             <T variant="small">{t('TEST BUILD')}</T>
           </>
         )}

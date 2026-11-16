@@ -6,7 +6,7 @@ import type { ApiError } from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { useI18n } from '@/lib/i18n';
 import { discardOutbox, loadOutbox, onOutboxChange, removeFile, replaceFile, retryFile, sendOutbox, type Outbox, type OutboxMedia } from '@/lib/outbox';
-import { Button, C, Card, Notice, pkr, Row, T, when } from '@/lib/ui';
+import { Button, C, Card, ltr, Notice, pkr, Row, T, when } from '@/lib/ui';
 
 /** Plain words for each file state and the most common upload errors. */
 const STATE: Record<OutboxMedia['state'], string> = { pending: 'Waiting to send', uploading: 'Sending…', uploaded: 'Sent', failed: 'Not sent' };
@@ -60,7 +60,7 @@ export function OutboxCard({ onChange, bookingId }: { onChange?: () => void; boo
   };
   const discard = async () => { await discardOutbox(); setConfirmDiscard(false); onChange?.(); };
 
-  const headline = created ? `${t('Booking received')}: ${o.booking!.ref}`
+  const headline = created ? `${t('Booking received')}: ${ltr(o.booking!.ref)}`
     : sending ? t('Sending your booking…')
     : o.status === 'uncertain' ? t('We could not confirm whether your booking was received.')
     : t('Your booking is saved on this phone and has not been sent yet.');

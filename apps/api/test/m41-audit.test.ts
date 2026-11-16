@@ -138,3 +138,22 @@ describe('Test-only lost-reply control', () => {
     }
   });
 });
+
+describe('Area search found nothing for "g10"', () => {
+  let app: FastifyInstance;
+  beforeAll(async () => { app = await freshApp(); });
+  afterAll(async () => { await app.close(); });
+  it('the service list shows a starting price per service (fixed price or inspection fee)', async () => {
+    const r = JSON.parse((await app.inject({ method: 'GET', url: `/v1/catalogue?locality_id=${LOCALITY.G10}` })).body);
+    const jobs = r.categories.flatMap((c: { jobs: unknown[] }) => c.jobs) as { code: string; from_price_paisa: number | null }[];
+    expect(jobs.find((j) => j.code === 'plumbing.tap_leak')!.from_price_paisa).toBe(800_00);
+    expect(jobs.filter((j) => j.from_price_paisa).length).toBeGreaterThan(5);
+  });
+
+  it('g10, G10, g 10, g-10 and the Urdu spelling all find G-10', async () => {
+    for (const q of ['g10', 'G10', 'g 10', 'g-10', 'جی ٹین']) {
+      const r = await app.inject({ method: 'GET', url: `/v1/places?q=${encodeURIComponent(q)}` });
+      expect(JSON.parse(r.body).map((p: { name_en: string }) => p.name_en), q).toContain('G-10');
+    }
+  });
+});

@@ -246,6 +246,12 @@ const ur: Record<string, string> = {
   'Your provider sent a new price. Approve or decline it below.': 'کاریگر نے نئی قیمت بھیجی ہے۔ نیچے منظور یا مسترد کریں۔',
   'no reply': 'کوئی جواب نہیں',
   'test sign-in codes': 'ٹیسٹ سائن ان کوڈ',
+  'No area matches. Try another spelling, for example G-10, F-10 or Satellite Town.': 'کوئی علاقہ نہیں ملا۔ دوسرے ہجے آزمائیں، مثلاً G-10، F-10 یا سیٹلائٹ ٹاؤن۔',
+  'Where do you need the service?': 'آپ کو سروس کہاں چاہیے؟',
+  'Start by choosing your area. You can use your location or search by name.': 'پہلے اپنا علاقہ منتخب کریں۔ آپ اپنا مقام استعمال کر سکتے ہیں یا نام سے تلاش کر سکتے ہیں۔',
+  'Keep booking': 'بکنگ رہنے دیں',
+  'Cancel this booking': 'یہ بکنگ منسوخ کریں',
+  'from': 'از',
 };
 
 const Ctx = createContext<{ lang: Lang; rtl: boolean; setLang: (l: Lang) => void; t: (s: string) => string }>({

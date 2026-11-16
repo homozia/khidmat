@@ -4,7 +4,7 @@ import { Pressable, ScrollView } from 'react-native';
 import { api } from '@/lib/api';
 import { errorText } from '@/lib/errors';
 import { useI18n, useName } from '@/lib/i18n';
-import { Card, Notice, T, usePlace } from '@/lib/ui';
+import { Card, Notice, pkr, Row, T, usePlace } from '@/lib/ui';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -28,7 +28,10 @@ export default function Category() {
         <Pressable key={j.id} accessibilityRole="button" onPress={() => router.push({ pathname: '/book/[jobId]', params: { jobId: j.id, code } })}>
           <Card>
             <T style={{ fontWeight: '600' }}>{name(j)}</T>
-            <T variant="small">{j.booking_modes.includes('fixed') ? t('Fixed price') : j.booking_modes.includes('inspection') ? t('Inspection fee') : t('Price after inspection')}</T>
+            <Row style={{ justifyContent: 'space-between' }}>
+              <T variant="small">{j.booking_modes.includes('fixed') ? t('Fixed price') : j.booking_modes.includes('inspection') ? t('Inspection fee') : t('Price after inspection')}</T>
+              {j.from_price_paisa ? <T style={{ fontWeight: '600' }}>{t('from')} {pkr(j.from_price_paisa)}</T> : null}
+            </Row>
           </Card>
         </Pressable>
       ))}

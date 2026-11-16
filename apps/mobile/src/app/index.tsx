@@ -32,15 +32,23 @@ export default function Home() {
   return (
     <ScrollView contentContainerStyle={{ padding: 16 }} refreshControl={<RefreshControl refreshing={false} onRefresh={load} />}>
       <OutboxCard key={tick} />
-      <Pressable accessibilityRole="button" onPress={() => router.push('/location')}>
+      {!place ? (
         <Card>
-          <T variant="small">{t('Your location')}</T>
-          <Row style={{ justifyContent: 'space-between' }}>
-            <T style={{ fontWeight: '600' }}>{place ? `${place.label}${place.zone ? ` · ${name(place.zone)}` : ''}` : t('Choose my area')}</T>
-            <T style={{ color: C.primary }}>{t('Change')}</T>
-          </Row>
+          <T variant="title">{t('Where do you need the service?')}</T>
+          <T variant="muted">{t('Start by choosing your area. You can use your location or search by name.')}</T>
+          <Button title={t('Choose my area')} onPress={() => router.push('/location')} />
         </Card>
-      </Pressable>
+      ) : (
+        <Pressable accessibilityRole="button" accessibilityLabel={`${t('Your location')}: ${place.label}. ${t('Change')}`} onPress={() => router.push('/location')}>
+          <Card>
+            <T variant="small">{t('Your location')}</T>
+            <Row style={{ justifyContent: 'space-between' }}>
+              <T style={{ fontWeight: '600', flex: 1 }}>{`${place.label}${place.zone ? ` · ${name(place.zone)}` : ''}`}</T>
+              <T style={{ color: C.primary }}>{t('Change')}</T>
+            </Row>
+          </Card>
+        </Pressable>
+      )}
       {error && <Notice kind="err" text={error} />}
       {place && <T variant="title" style={{ marginVertical: 8 }}>{t('What do you need?')}</T>}
       <Row gap={10}>

@@ -13,6 +13,8 @@ const VERSION_CODE = Number(process.env.KHIDMAT_VERSION_CODE ?? 4);
 
 type Variant = 'development' | 'fieldtest' | 'staging' | 'production';
 const variant = (process.env.APP_VARIANT ?? 'development') as Variant;
+// Also inlined into the JavaScript bundle (web previews do not embed `extra`).
+process.env.EXPO_PUBLIC_APP_VARIANT = variant;
 const apiUrl = process.env.EXPO_PUBLIC_API_URL ?? '';
 if ((variant === 'staging' || variant === 'production') && !apiUrl.startsWith('https://')) {
   throw new Error(`${variant} builds need EXPO_PUBLIC_API_URL set to an https:// address`);

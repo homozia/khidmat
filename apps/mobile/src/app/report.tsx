@@ -27,7 +27,7 @@ export default function Report() {
   const [steps, setSteps] = useState('');
   const [last, setLast] = useState<DiagEntry | null>(null);
   const [shared, setShared] = useState(false);
-  const screen = currentScreen();
+  const screen = currentScreen().replace(/[0-9a-f]{8}-[0-9a-f-]{27}/g, '…');
   const ref = currentBookingRef();
   useEffect(() => { void loadDiagnostics().then((l) => setLast(l[0] ?? null)); }, []);
 
