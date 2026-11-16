@@ -173,7 +173,7 @@ function BookingDetail({ id }: { id: string }) {
           <dt>Price terms</dt><dd>{d.booking_mode} · commission {d.terms_snapshot.commission.rate_bps / 100}% {d.terms_snapshot.pricing_is_demo && <span className="pill pill-pending">demo price</span>}</dd>
           <dt>Customer total</dt><dd className="num">{pkr(d.totals.customer_total_paisa)}{d.totals.refunded_paisa > 0 && ` (refunded ${pkr(d.totals.refunded_paisa)})`}</dd>
           {d.provider_money && <><dt>Platform fee</dt><dd className="num">{pkr(d.provider_money.fee_paisa)}</dd></>}
-          {d.terms_snapshot.requires_authorization_check && <><dt>Lockout check</dt><dd>{d.authorization_check ? (d.authorization_check.verified ? `Verified: ${d.authorization_check.method.replace(/_/g, ' ')}` : 'Could not be verified') : 'Not recorded yet'}</dd></>}
+          {d.requires_authorization_check && <><dt>Lockout check</dt><dd>{d.authorization_check ? (d.authorization_check.verified ? `Verified: ${d.authorization_check.method.replace(/_/g, ' ')}` : 'Could not be verified') : 'Not recorded yet'}</dd></>}
           {receipt.data && <><dt>Cash</dt><dd>{receipt.data.payment_status_text ?? receipt.data.payment_status}</dd></>}
           {receipt.data?.outstanding?.length > 0 && <><dt>Still to do</dt><dd>{receipt.data.outstanding.join('; ')}</dd></>}
         </dl>

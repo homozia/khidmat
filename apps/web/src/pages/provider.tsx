@@ -102,6 +102,8 @@ function JobDetail({ id }: { id: string }) {
   if (!b) return <Loading error={error} loading={loading} />;
   const next = NEXT[b.status];
   const working = ['on_site', 'in_progress', 'assigned', 'en_route'].includes(b.status);
+  const visitOnly = b.quotes.some((q: any) => q.status === 'approved' && q.lines.every((l: any) => l.charge_type === 'visit_charge'));
+  const checkBlocks = b.requires_authorization_check && !b.authorization_check?.verified && !visitOnly;
   return (
     <section className="stack">
       <button className="link" onClick={() => go('jobs')}>{t('Back')}</button>
@@ -146,7 +148,8 @@ function JobDetail({ id }: { id: string }) {
       </div>
       {showQuote && <QuoteBuilder bookingId={id} onDone={() => { setShowQuote(false); void reload(); }} driver={b.job?.name_en?.toLowerCase().includes('driver') || b.destination_text} />}
 
-      {['on_site', 'in_progress'].includes(b.status) && (
+      {['on_site', 'in_progress'].includes(b.status) && checkBlocks && <p className="notice notice-err">{t('Completing this job needs a verified occupancy check, or a visit charge billed by dispatch.')}</p>}
+      {['on_site', 'in_progress'].includes(b.status) && !checkBlocks && (
         <form className="panel" onSubmit={async (e) => {
           e.preventDefault();
           await a.run(() => post(`/v1/provider/bookings/${id}/complete`, { cash_collected_paisa: Math.round(Number(cash) * 100) }, completeKey));

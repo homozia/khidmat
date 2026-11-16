@@ -341,10 +341,11 @@ export async function getBooking(db: Db, user: AuthUser, id: string) {
     };
   }
   if (staff) view.terms_snapshot = b.terms_snapshot;
-  const snap = b.terms_snapshot as { requires_authorization_check?: boolean; visit_charge_paisa?: number };
-  view.requires_authorization_check = !!snap.requires_authorization_check;
+  const snap = b.terms_snapshot as { visit_charge_paisa?: number };
+  const needsCheck = await authorizationRequired(db, b);
+  view.requires_authorization_check = needsCheck;
   view.visit_charge_paisa = snap.visit_charge_paisa ?? 0;
-  if (snap.requires_authorization_check && (isAssignedProvider || staff || isCustomer)) {
+  if (needsCheck && (isAssignedProvider || staff || isCustomer)) {
     view.authorization_check = await one(db, 'SELECT verified, method, note, created_at FROM authorization_checks WHERE booking_id = $1', [id]) ?? null;
   }
   if (isCustomer || staff) {
@@ -356,6 +357,36 @@ export async function getBooking(db: Db, user: AuthUser, id: string) {
   view.attachment_count = (await one<{ n: number }>(db,
     'SELECT count(*)::int AS n FROM attachments WHERE booking_id = $1 AND deleted_at IS NULL', [id]))?.n ?? 0;
   return view;
+}
+
+/**
+ * Does this booking need an occupancy (authorisation) check before work or billing?
+ * Bookings made since M4 carry the answer in the terms the customer accepted. Older bookings (made before the
+ * flag existed) fall back to the service's current setting, so a pre-M4 lockout is never exempt.
+ */
+export async function authorizationRequired(db: Db, b: Pick<BookingRow, 'job_id' | 'terms_snapshot'>): Promise<boolean> {
+  const snap = b.terms_snapshot as { requires_authorization_check?: unknown };
+  if (typeof snap?.requires_authorization_check === 'boolean') return snap.requires_authorization_check;
+  const j = await one<{ r: boolean }>(db, 'SELECT requires_authorization_check AS r FROM jobs WHERE id = $1', [b.job_id]);
+  return !!j?.r;
+}
+
+/**
+ * Work may only start, or be billed, after a verified check. The single exception is a visit-only charge:
+ * staff billed the visit charge disclosed in the accepted terms (for a defined reason) and nothing else is approved.
+ */
+async function assertAuthorizedForWork(c: PoolClient, b: BookingRow, billing: boolean) {
+  if (!(await authorizationRequired(c, b))) return;
+  const chk = await one<{ verified: boolean }>(c, 'SELECT verified FROM authorization_checks WHERE booking_id = $1', [b.id]);
+  if (chk?.verified) return;
+  if (billing) {
+    const lines = await one<{ total: number; visit: number }>(c,
+      `SELECT count(*)::int AS total, count(*) FILTER (WHERE ql.charge_type = 'visit_charge' AND q.visit_reason IS NOT NULL)::int AS visit
+       FROM quote_lines ql JOIN quotes q ON q.id = ql.quote_id WHERE q.booking_id = $1 AND q.status = 'approved'`, [b.id]);
+    if (lines && lines.total > 0 && lines.total === lines.visit) return; // legitimate visit-only charge
+  }
+  if (!chk) throw conflict('AUTHORIZATION_CHECK_REQUIRED', 'Record the occupant authorisation check before starting or completing work.');
+  throw conflict('AUTHORIZATION_NOT_VERIFIED', 'The occupant could not be verified. Do not open; call dispatch, who can bill the agreed visit charge only.');
 }
 
 function requireAssignedProvider(user: AuthUser, b: BookingRow) {
@@ -371,12 +402,7 @@ export async function providerSetStatus(c: PoolClient, user: AuthUser, id: strin
        WHERE q.booking_id = $1 AND q.status = 'approved' AND ql.charge_type = ANY($2)`, [id, WORK_CHARGE_TYPES]);
     if (!work?.n) throw conflict('APPROVAL_REQUIRED', 'The customer must approve a price for the work before it starts.');
     // Lockouts: the provider must record a successful authorisation check before opening anything.
-    const needsCheck = (b.terms_snapshot as { requires_authorization_check?: boolean }).requires_authorization_check;
-    if (needsCheck) {
-      const chk = await one<{ verified: boolean }>(c, 'SELECT verified FROM authorization_checks WHERE booking_id = $1', [id]);
-      if (!chk) throw conflict('AUTHORIZATION_CHECK_REQUIRED', 'Record the occupant authorisation check before starting work.');
-      if (!chk.verified) throw conflict('AUTHORIZATION_NOT_VERIFIED', 'The occupant could not be verified. Do not open; call dispatch for a visit charge.');
-    }
+    await assertAuthorizedForWork(c, b, false);
   }
   await moveTo(c, b, to, 'provider', user.id, `status_${to}`);
 }
@@ -427,6 +453,8 @@ export async function decideQuote(c: PoolClient, user: AuthUser, quoteId: string
 export async function completeBooking(c: PoolClient, user: AuthUser, id: string, cashCollectedPaisa: number) {
   const b = await lockBooking(c, id);
   requireAssignedProvider(user, b);
+  // Completing from on_site skips in_progress, so the lockout rule is enforced here too.
+  await assertAuthorizedForWork(c, b, true);
   const totals = await bookingTotals(c, id, b.commission_rate_bps);
   if (totals.customerTotalPaisa <= 0) throw conflict('NOTHING_TO_BILL', 'There is no approved charge on this booking.');
   if (cashCollectedPaisa !== totals.customerTotalPaisa) {

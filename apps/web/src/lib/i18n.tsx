@@ -4,6 +4,7 @@ export type Lang = 'en' | 'ur';
 
 /** UI strings. Catalogue names (jobs, categories, zones) come from the API in both languages. */
 const ur: Record<string, string> = {
+  'Completing this job needs a verified occupancy check, or a visit charge billed by dispatch.': 'یہ کام مکمل کرنے کے لیے رہائش کی تصدیق، یا ڈسپیچ کی طرف سے وزٹ چارج ضروری ہے۔',
   'This offer has expired.': 'یہ پیشکش ختم ہو چکی ہے۔',
   'This offer is no longer available to you.': 'یہ پیشکش اب آپ کے لیے دستیاب نہیں۔',
   'Fee charged on (labour)': 'فیس جس رقم پر لگی (مزدوری)',
