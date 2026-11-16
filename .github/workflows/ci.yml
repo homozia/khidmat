@@ -25,6 +25,13 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22.18, cache: npm }
       - run: npm ci
+      - name: Prepare the test databases (PostGIS and pgcrypto, plus the two app-test databases)
+        env: { PGPASSWORD: khidmat_dev }
+        run: |
+          for db in khidmat_a_test khidmat_b_test; do psql -h localhost -U khidmat -d khidmat_test -c "CREATE DATABASE $db"; done
+          for db in khidmat_test khidmat_a_test khidmat_b_test; do
+            psql -h localhost -U khidmat -d $db -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS postgis; CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+          done
       - run: npm run lint
       - run: npm run typecheck
       - name: API and database tests
