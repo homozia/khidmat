@@ -79,7 +79,7 @@ describe('AC4 - inspection, change order, partial refund, weekly statement', () 
     const c = await u.customerIsb.get(`/v1/bookings/${bookingId}/receipt`);
     expect(c.body).toMatchObject({ total_paisa: 3900_00, refunded_paisa: 400_00, net_paid_paisa: 3500_00 });
     const p = await u.plumberIsb.get(`/v1/bookings/${bookingId}/receipt`);
-    expect(p.body.provider).toEqual({ commission_rate_bps: 800, commissionable_paisa: 2200_00, fee_paisa: 176_00, net_earnings_paisa: 3324_00 });
+    expect(p.body.provider).toMatchObject({ commission_rate_bps: 800, gross_paisa: 3500_00, commissionable_paisa: 2200_00, fee_paisa: 176_00, net_earnings_paisa: 3324_00 });
   });
 
   it('a non-finance user cannot issue a refund', async () => {

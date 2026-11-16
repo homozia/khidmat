@@ -6,7 +6,8 @@ import { isStaff, type AuthUser, type Role } from './services/auth.ts';
 import { addAttachment, addProviderDocument, attachmentUrl, deleteAttachment, listAttachments, providerDocumentUrl } from './services/attachments.ts';
 import { addReview, listComplaints, openComplaint, resolveComplaint } from './services/care.ts';
 import * as admin from './services/admin.ts';
-import { readStored, verifySignedUrl } from './services/storage.ts';
+import { readStored, storageDriver, verifySignedUrl } from './services/storage.ts';
+import { markRefundPaid } from './services/finance.ts';
 import { runJobsOnce } from './services/jobs.ts';
 
 const BINARY_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'audio/mp4', 'audio/m4a', 'audio/aac', 'audio/mpeg'];
@@ -41,6 +42,7 @@ export function registerM3Routes(app: FastifyInstance) {
   });
   /** Signed, expiring download link. No session needed: the signature is the permission. */
   app.get('/v1/files', async (req, reply: FastifyReply) => {
+    if (storageDriver().name !== 'local') throw notFound('File');
     const { key, type } = verifySignedUrl(req.query as Record<string, string>);
     const buf = await readStored(key).catch(() => { throw notFound('File'); });
     return reply.header('content-type', type).header('cache-control', 'private, max-age=60').header('x-content-type-options', 'nosniff')
@@ -131,7 +133,7 @@ export function registerM3Routes(app: FastifyInstance) {
     const u = need(req, 'verification');
     const p = z.object({ id: z.uuid(), skill: z.string() }).parse(req.params);
     const b = z.object({ decision: z.enum(['approved', 'rejected']), check_note: z.string().trim().min(3).max(300),
-      expires_at: z.iso.date().optional() }).strict().parse(req.body);
+      expires_at: z.iso.date().optional(), evidence_document_id: z.uuid().optional() }).strict().parse(req.body);
     await tx((c) => admin.decideSkill(c, u, p.id, p.skill, b));
     return { ok: true };
   });
@@ -170,6 +172,68 @@ export function registerM3Routes(app: FastifyInstance) {
     const { status } = z.object({ status: z.enum(['active', 'paused', 'draft']) }).parse(req.body);
     await tx((c) => admin.setZoneStatus(c, u, Uuid.parse(req.params).id, status));
     return { ok: true };
+  });
+
+  // ---- Location directory ----
+  app.get('/v1/admin/regions', async (req) => { need(req, 'config_admin', 'dispatcher'); return admin.listRegions(pool); });
+  app.post('/v1/admin/regions', async (req, reply) => {
+    const u = need(req, 'config_admin');
+    return reply.status(201).send(await tx((c) => admin.createRegion(c, u, admin.RegionInput.parse(req.body))));
+  });
+  app.post('/v1/admin/regions/:id/aliases', async (req, reply) => {
+    const u = need(req, 'config_admin');
+    const b = z.object({ alias: z.string().trim().min(1).max(80), lang: z.enum(['en', 'ur', 'roman']) }).strict().parse(req.body);
+    await tx((c) => admin.addAlias(c, u, Uuid.parse(req.params).id, b.alias, b.lang));
+    return reply.status(201).send({ ok: true });
+  });
+  app.delete('/v1/admin/aliases/:aliasId', async (req, reply) => {
+    const u = need(req, 'config_admin');
+    const { aliasId } = z.object({ aliasId: z.coerce.number().int().positive() }).parse(req.params);
+    await tx((c) => admin.removeAlias(c, u, aliasId));
+    return reply.status(204).send();
+  });
+  app.post('/v1/admin/regions/:id/status', async (req) => {
+    const u = need(req, 'config_admin');
+    const { status } = z.object({ status: z.enum(['active', 'hidden']) }).parse(req.body);
+    await tx((c) => admin.setRegionStatus(c, u, Uuid.parse(req.params).id, status));
+    return { ok: true };
+  });
+
+  // ---- Skills, categories, service settings, intake fields ----
+  app.get('/v1/admin/skills', async (req) => { need(req, 'config_admin', 'verification'); return admin.listSkills(pool); });
+  app.put('/v1/admin/skills', async (req) => {
+    const u = need(req, 'config_admin');
+    await tx((c) => admin.upsertSkill(c, u, admin.SkillInput.parse(req.body)));
+    return { ok: true };
+  });
+  app.post('/v1/admin/categories', async (req, reply) => {
+    const u = need(req, 'config_admin');
+    return reply.status(201).send(await tx((c) => admin.createCategory(c, u, admin.NewCategoryInput.parse(req.body))));
+  });
+  app.patch('/v1/admin/jobs/:id/settings', async (req) => {
+    const u = need(req, 'config_admin');
+    await tx((c) => admin.updateJobSettings(c, u, Uuid.parse(req.params).id, admin.JobSettingsInput.parse(req.body)));
+    return { ok: true };
+  });
+  app.put('/v1/admin/jobs/:id/fields', async (req) => {
+    const u = need(req, 'config_admin');
+    await tx((c) => admin.upsertIntakeField(c, u, Uuid.parse(req.params).id, admin.IntakeFieldInput.parse(req.body)));
+    return { ok: true };
+  });
+  app.delete('/v1/admin/jobs/:id/fields/:key', async (req, reply) => {
+    const u = need(req, 'config_admin');
+    const p = z.object({ id: z.uuid(), key: z.string() }).parse(req.params);
+    await tx((c) => admin.removeIntakeField(c, u, p.id, p.key));
+    return reply.status(204).send();
+  });
+  app.get('/v1/admin/jobs/:id', async (req) => {
+    need(req, 'config_admin');
+    const id = Uuid.parse(req.params).id;
+    const job = await one(pool, `SELECT j.*, c.code AS category_code,
+        coalesce((SELECT json_agg(f ORDER BY f.display_order) FROM job_intake_fields f WHERE f.job_id = j.id), '[]') AS fields
+      FROM jobs j JOIN categories c ON c.id = j.category_id WHERE j.id = $1`, [id]);
+    if (!job) throw notFound('Service');
+    return job;
   });
 
   // ---- Catalogue, prices, commission ----
@@ -226,8 +290,15 @@ export function registerM3Routes(app: FastifyInstance) {
   });
   app.post('/v1/admin/bookings/:id/visit-charge', async (req) => {
     const u = need(req, 'dispatcher');
-    const b = z.object({ amount_paisa: z.number().int().positive().max(1_000_000), reason: z.string().trim().min(5).max(300) }).parse(req.body);
-    await tx((c) => admin.addVisitCharge(c, u, Uuid.parse(req.params).id, b.amount_paisa, b.reason));
+    const b = z.object({ reason: z.enum(admin.VISIT_REASONS), note: z.string().trim().min(5).max(300) }).strict().parse(req.body);
+    await tx((c) => admin.addVisitCharge(c, u, Uuid.parse(req.params).id, b.reason, b.note));
+    return { ok: true };
+  });
+  app.post('/v1/admin/refunds/:id/paid', async (req) => {
+    const u = need(req, 'finance');
+    const b = z.object({ method: z.enum(['provider_cash', 'jazzcash', 'easypaisa', 'bank_transfer', 'office_cash']),
+      reference: z.string().trim().min(3).max(120) }).strict().parse(req.body);
+    await tx((c) => markRefundPaid(c, u, Uuid.parse(req.params).id, b));
     return { ok: true };
   });
   app.post('/v1/admin/providers/:id/adjustments', async (req, reply) => {

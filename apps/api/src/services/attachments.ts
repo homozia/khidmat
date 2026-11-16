@@ -2,7 +2,7 @@ import type { PoolClient } from 'pg';
 import { one, many, type Db } from '../db.ts';
 import { conflict, notFound, unprocessable } from '../lib/errors.ts';
 import { isStaff, type AuthUser } from './auth.ts';
-import { deleteFile, KINDS, putFile, signedUrl, validateUpload } from './storage.ts';
+import { deleteFile, fileUrl, KINDS, putFile, validateUpload } from './storage.ts';
 
 const MAX_CUSTOMER_PHOTOS = 3;
 const MAX_CUSTOMER_VOICE = 1;
@@ -34,7 +34,7 @@ export async function addAttachment(c: PoolClient, user: AuthUser, bookingId: st
   } else if (!b.isProvider) {
     throw notFound('Booking');
   }
-  const key = await putFile('booking', buf);
+  const key = await putFile('booking', buf, type);
   const row = await one<{ id: string }>(c,
     `INSERT INTO attachments (booking_id, owner_user_id, kind, storage_key, content_type, size_bytes) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
     [bookingId, user.id, kind, key, type, buf.length]);
@@ -52,7 +52,7 @@ export async function attachmentUrl(db: Db, user: AuthUser, attachmentId: string
     'SELECT booking_id, storage_key, content_type FROM attachments WHERE id = $1 AND deleted_at IS NULL', [attachmentId]);
   if (!a) throw notFound('File');
   await bookingAccess(db, user, a.booking_id);
-  return signedUrl(a.storage_key, a.content_type);
+  return fileUrl(a.storage_key, a.content_type);
 }
 
 export async function deleteAttachment(c: PoolClient, user: AuthUser, attachmentId: string) {
@@ -67,7 +67,7 @@ export async function deleteAttachment(c: PoolClient, user: AuthUser, attachment
 
 export async function addProviderDocument(c: PoolClient, providerId: string, docType: string, declaredType: string, buf: Buffer) {
   const type = validateUpload(KINDS.document, declaredType, buf);
-  const key = await putFile('provider', buf);
+  const key = await putFile('provider', buf, type);
   const row = await one<{ id: string }>(c,
     `INSERT INTO provider_documents (provider_id, doc_type, storage_key, content_type, size_bytes) VALUES ($1,$2,$3,$4,$5) RETURNING id`,
     [providerId, docType, key, type, buf.length]);
@@ -80,5 +80,5 @@ export async function providerDocumentUrl(c: PoolClient, staff: AuthUser, docId:
   if (!d) throw notFound('Document');
   await c.query(`INSERT INTO audit_log (actor_user_id, action, entity_type, entity_id, reason) VALUES ($1,'document.view','provider_document',$2,$3)`,
     [staff.id, docId, reason]);
-  return signedUrl(d.storage_key, d.content_type);
+  return fileUrl(d.storage_key, d.content_type);
 }

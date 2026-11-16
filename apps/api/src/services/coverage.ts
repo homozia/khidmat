@@ -59,7 +59,7 @@ export async function resolveCoverage(db: Db, input: CoverageInput): Promise<Cov
      FROM service_zones z
      ${input.jobId ? `JOIN job_zone_availability a ON a.zone_id = z.id AND a.job_id = $3 AND a.status = 'enabled'` : ''}
      WHERE z.status = 'active' ${demoClause()}
-       AND ST_Contains(z.boundary, ST_SetSRID(ST_MakePoint($1, $2), 4326))
+       AND ST_Covers(z.boundary, ST_SetSRID(ST_MakePoint($1, $2), 4326))
      ORDER BY z.precedence DESC, ST_Area(z.boundary::geography) ASC, z.id ASC
      LIMIT 1`,
     input.jobId ? [point.lng, point.lat, input.jobId] : [point.lng, point.lat]);

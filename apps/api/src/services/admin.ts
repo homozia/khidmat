@@ -27,6 +27,7 @@ export const ZoneInput = z.object({
   name_en: z.string().trim().min(2).max(120),
   name_ur: z.string().trim().min(2).max(120),
   city_code: z.string().optional(),
+  city_region_id: z.uuid().optional(),
   boundary: GeoJsonArea,
   precedence: z.number().int().min(-100).max(100).default(0),
   opens_at: z.string().regex(/^\d{2}:\d{2}$/).default('08:00'),
@@ -50,12 +51,12 @@ export async function createZone(c: PoolClient, staff: AuthUser, input: z.infer<
     `SELECT ST_IsValid(g) AS ok, ST_IsValidReason(g) AS reason FROM (SELECT ST_SetSRID(ST_GeomFromGeoJSON($1), 4326) AS g) x`, [geo]);
   if (!valid?.ok) throw unprocessable('INVALID_BOUNDARY', `The boundary is not a valid shape: ${valid?.reason}`);
   if (await one(c, 'SELECT 1 FROM service_zones WHERE code = $1', [input.code])) throw conflict('ZONE_EXISTS', 'A zone with this code exists.');
-  const city = input.city_code ? await one<{ id: string; parent_id: string; district: string | null }>(c,
+  const city = input.city_code || input.city_region_id ? await one<{ id: string; parent_id: string; district: string | null }>(c,
     `SELECT r.id, r.parent_id, (WITH RECURSIVE up AS (SELECT id, parent_id, level FROM regions WHERE id = r.id
        UNION ALL SELECT p.id, p.parent_id, p.level FROM regions p JOIN up ON p.id = up.parent_id)
        SELECT id FROM up WHERE level = 'district' LIMIT 1) AS district
-     FROM regions r WHERE r.code = $1 AND r.level = 'city'`, [input.city_code]) : undefined;
-  if (input.city_code && !city) throw unprocessable('UNKNOWN_CITY', 'Unknown city code.');
+     FROM regions r WHERE (r.code = $1 OR r.id::text = $2) AND r.level = 'city'`, [input.city_code ?? null, input.city_region_id ?? null]) : undefined;
+  if ((input.city_code || input.city_region_id) && !city) throw unprocessable('UNKNOWN_CITY', 'Unknown city.');
   const z_ = await one<{ id: string }>(c,
     `INSERT INTO service_zones (id, code, name_en, name_ur, city_region_id, district_region_id, boundary, precedence, opens_at, closes_at,
        travel_charge_paisa, status, is_demo)
@@ -66,7 +67,7 @@ export async function createZone(c: PoolClient, staff: AuthUser, input: z.infer<
   return { id: z_!.id, status: 'draft' };
 }
 
-export const ZonePatch = ZoneInput.omit({ code: true, city_code: true }).partial().strict();
+export const ZonePatch = ZoneInput.omit({ code: true, city_code: true, city_region_id: true }).partial().strict();
 
 export async function updateZone(c: PoolClient, staff: AuthUser, zoneId: string, input: z.infer<typeof ZonePatch>) {
   const zone = await one<{ status: string }>(c, 'SELECT status FROM service_zones WHERE id = $1 FOR UPDATE', [zoneId]);
@@ -249,16 +250,22 @@ export async function reviewDocument(c: PoolClient, staff: AuthUser, docId: stri
 
 /** Approving a skill records what was checked (licence number, certificate) and when it expires. */
 export async function decideSkill(c: PoolClient, staff: AuthUser, providerId: string, skill: string,
-  input: { decision: 'approved' | 'rejected'; check_note: string; expires_at?: string }) {
+  input: { decision: 'approved' | 'rejected'; check_note: string; expires_at?: string; evidence_document_id?: string }) {
   const restricted = await one<{ restricted: boolean }>(c, 'SELECT restricted FROM skills WHERE code = $1', [skill]);
   if (!restricted) throw notFound('Skill');
-  if (input.decision === 'approved' && restricted.restricted && !input.expires_at) {
-    throw unprocessable('EXPIRY_REQUIRED', 'Restricted skills need the licence or certificate expiry date.');
+  if (input.decision === 'approved' && restricted.restricted) {
+    if (!input.expires_at) throw unprocessable('EXPIRY_REQUIRED', 'Restricted skills need the licence or certificate expiry date.');
+    if (new Date(input.expires_at).getTime() <= Date.now()) throw unprocessable('EXPIRED_EVIDENCE', 'That licence or certificate has already expired.');
+    // The approval must point at a document from this provider that a verification officer accepted.
+    if (!input.evidence_document_id) throw unprocessable('EVIDENCE_REQUIRED', 'Choose the accepted document that proves this skill.');
+    const doc = await one<{ ok: boolean }>(c, `SELECT (provider_id = $2 AND status = 'accepted' AND deleted_at IS NULL) AS ok FROM provider_documents WHERE id = $1`,
+      [input.evidence_document_id, providerId]);
+    if (!doc?.ok) throw unprocessable('EVIDENCE_NOT_ACCEPTED', 'The evidence must be an accepted document uploaded by this provider.');
   }
-  const r = await c.query(`UPDATE provider_skills SET status = $3, check_note = $4, expires_at = $5,
+  const r = await c.query(`UPDATE provider_skills SET status = $3, check_note = $4, expires_at = $5, evidence_document_id = $7,
                              approved_by = CASE WHEN $3 = 'approved' THEN $6::uuid END, approved_at = CASE WHEN $3 = 'approved' THEN now() END
                            WHERE provider_id = $1 AND skill_code = $2`,
-    [providerId, skill, input.decision, input.check_note, input.expires_at ?? null, staff.id]);
+    [providerId, skill, input.decision, input.check_note, input.expires_at ?? null, staff.id, input.evidence_document_id ?? null]);
   if (!r.rowCount) throw notFound('Provider skill');
   await audit(c, staff.id, 'skill.decide', 'provider', providerId, input.check_note, { skill, ...input });
 }
@@ -316,15 +323,26 @@ export async function reassign(c: PoolClient, staff: AuthUser, bookingId: string
  * Visit charge when no work can be done (e.g. a lockout the locksmith could not verify, or the
  * customer was absent). Added by a dispatcher, with a reason, after speaking to the customer.
  */
-export async function addVisitCharge(c: PoolClient, staff: AuthUser, bookingId: string, amountPaisa: number, reason: string) {
+export const VISIT_REASONS = ['authorization_not_verified', 'customer_absent', 'access_refused'] as const;
+
+export async function addVisitCharge(c: PoolClient, staff: AuthUser, bookingId: string, visitReason: (typeof VISIT_REASONS)[number], note: string) {
   const b = await lockBooking(c, bookingId);
   if (b.status !== 'on_site') throw conflict('NOT_ON_SITE', 'A visit charge can only be added while the provider is on site.');
+  // Only the visit charge disclosed to the customer at booking may be billed.
+  const amountPaisa = Number((b.terms_snapshot as { visit_charge_paisa?: number }).visit_charge_paisa ?? 0);
+  if (amountPaisa <= 0) throw conflict('NO_VISIT_CHARGE_TERMS', 'This booking was not made with a visit charge, so none can be billed.');
+  if (visitReason === 'authorization_not_verified') {
+    const chk = await one<{ verified: boolean }>(c, 'SELECT verified FROM authorization_checks WHERE booking_id = $1', [bookingId]);
+    if (!chk || chk.verified) throw conflict('CHECK_NOT_FAILED', 'The provider has not recorded a failed authorisation check.');
+  }
+  const reason = `${visitReason.replace(/_/g, ' ')}: ${note}`;
   // No work was done, so the work price agreed at booking is set aside (superseded, never edited) and only the visit is billed.
   const setAside = await c.query(`UPDATE quotes SET status = 'superseded' WHERE booking_id = $1 AND status IN ('approved', 'sent')`, [bookingId]);
   const rev = await one<{ n: number }>(c, 'SELECT coalesce(max(revision), 0) + 1 AS n FROM quotes WHERE booking_id = $1', [bookingId]);
   const q = await one<{ id: string }>(c,
     `INSERT INTO quotes (booking_id, revision, kind, status, created_by, decided_by, decided_at, note)
      VALUES ($1,$2,'change_order','approved',$3,$3,now(),$4) RETURNING id`, [bookingId, rev!.n, staff.id, `Visit charge only: ${reason}`]);
+  await c.query('UPDATE quotes SET visit_reason = $2 WHERE id = $1', [q!.id, visitReason]);
   await c.query(`INSERT INTO booking_events (booking_id, actor_user_id, event_type, data) VALUES ($1,$2,'visit_charge_only',$3)`,
     [bookingId, staff.id, JSON.stringify({ reason, amountPaisa, superseded_quotes: setAside.rowCount })]);
   const line = buildLine({ charge_type: 'visit_charge', description: 'Visit charge', quantity: 1, unit_price_paisa: amountPaisa });
@@ -373,4 +391,168 @@ export async function summaryReport(db: Db, from: string, to: string) {
     `SELECT count(*)::int AS opened, count(*) FILTER (WHERE status IN ('open', 'under_review'))::int AS still_open
      FROM complaints WHERE (created_at AT TIME ZONE 'Asia/Karachi')::date BETWEEN $1::date AND $2::date`, range);
   return { from, to, ...totals, ...money, complaints, by_category: byCategory, by_zone: byZone };
+}
+
+// ---------------- Location directory (data-driven cities, districts, localities, aliases) ----------------
+
+export const normalizeAlias = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+
+export async function listRegions(db: Db) {
+  return many(db,
+    `SELECT r.id, r.parent_id, r.level, r.code, r.name_en, r.name_ur, r.status, r.is_demo,
+            ST_Y(r.centroid) AS lat, ST_X(r.centroid) AS lng, r.boundary IS NOT NULL AS has_boundary,
+            coalesce((SELECT json_agg(json_build_object('id', a.id, 'alias', a.alias, 'lang', a.lang) ORDER BY a.id)
+                      FROM place_aliases a WHERE a.region_id = r.id), '[]') AS aliases
+     FROM regions r ORDER BY array_position(ARRAY['province','district','tehsil','city','locality'], r.level), r.name_en`);
+}
+
+const PARENT_LEVEL: Record<string, string[]> = {
+  province: [], district: ['province'], tehsil: ['district'], city: ['district', 'tehsil'], locality: ['city'],
+};
+
+export const RegionInput = z.object({
+  parent_id: z.uuid().nullable(),
+  level: z.enum(['province', 'district', 'tehsil', 'city', 'locality']),
+  code: z.string().regex(/^[A-Z0-9-]{2,40}$/),
+  name_en: z.string().trim().min(2).max(120),
+  name_ur: z.string().trim().min(2).max(120),
+  centre: z.object({ lat: z.number().min(23).max(37.2), lng: z.number().min(60.8).max(77.9) }).optional(),
+  boundary: GeoJsonArea.optional(),
+  aliases: z.array(z.object({ alias: z.string().trim().min(1).max(80), lang: z.enum(['en', 'ur', 'roman']) })).default([]),
+  is_demo: z.boolean().default(false),
+}).strict();
+
+export async function createRegion(c: PoolClient, staff: AuthUser, input: z.infer<typeof RegionInput>) {
+  const allowed = PARENT_LEVEL[input.level]!;
+  if (allowed.length === 0 && input.parent_id) throw unprocessable('BAD_PARENT', 'A province has no parent.');
+  if (allowed.length > 0) {
+    const parent = input.parent_id ? await one<{ level: string }>(c, 'SELECT level FROM regions WHERE id = $1', [input.parent_id]) : undefined;
+    if (!parent || !allowed.includes(parent.level)) throw unprocessable('BAD_PARENT', `A ${input.level} must sit under a ${allowed.join(' or ')}.`);
+  }
+  if (input.level === 'locality' && !input.centre && !input.boundary) throw unprocessable('LOCATION_REQUIRED', 'A locality needs a centre point or a boundary.');
+  if (await one(c, 'SELECT 1 FROM regions WHERE code = $1', [input.code])) throw conflict('REGION_EXISTS', 'That code is already used.');
+  const r = await one<{ id: string }>(c,
+    `INSERT INTO regions (id, parent_id, level, code, name_en, name_ur, centroid, boundary, is_demo)
+     VALUES (gen_random_uuid(), $1,$2,$3,$4,$5,
+       CASE WHEN $6::float8 IS NOT NULL THEN ST_SetSRID(ST_MakePoint($7,$6),4326)
+            WHEN $8::text IS NOT NULL THEN ST_PointOnSurface(ST_SetSRID(ST_GeomFromGeoJSON($8),4326)) END,
+       CASE WHEN $8::text IS NOT NULL THEN ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON($8),4326)) END, $9)
+     RETURNING id`,
+    [input.parent_id, input.level, input.code, input.name_en, input.name_ur, input.centre?.lat ?? null, input.centre?.lng ?? null,
+      input.boundary ? JSON.stringify(input.boundary) : null, input.is_demo]);
+  const aliases = [{ alias: input.name_en, lang: 'en' }, { alias: input.name_ur, lang: 'ur' }, ...input.aliases];
+  for (const a of aliases) {
+    await c.query(`INSERT INTO place_aliases (region_id, alias, lang, normalized) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING`,
+      [r!.id, a.alias, a.lang, normalizeAlias(a.alias)]);
+  }
+  await audit(c, staff.id, 'region.create', 'region', r!.id, null, { ...input, boundary: input.boundary ? 'set' : undefined });
+  return { id: r!.id };
+}
+
+export async function addAlias(c: PoolClient, staff: AuthUser, regionId: string, alias: string, lang: string) {
+  const r = await c.query(`INSERT INTO place_aliases (region_id, alias, lang, normalized) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING`,
+    [regionId, alias, lang, normalizeAlias(alias)]);
+  if (!r.rowCount) throw conflict('ALIAS_EXISTS', 'That name is already listed for this place.');
+  await audit(c, staff.id, 'region.alias.add', 'region', regionId, null, { alias, lang });
+}
+
+export async function removeAlias(c: PoolClient, staff: AuthUser, aliasId: number) {
+  const r = await one<{ region_id: string }>(c, 'DELETE FROM place_aliases WHERE id = $1 RETURNING region_id', [aliasId]);
+  if (!r) throw notFound('Alias');
+  await audit(c, staff.id, 'region.alias.remove', 'region', r.region_id, null, { aliasId });
+}
+
+export async function setRegionStatus(c: PoolClient, staff: AuthUser, id: string, status: 'active' | 'hidden') {
+  const r = await c.query('UPDATE regions SET status = $2 WHERE id = $1', [id, status]);
+  if (!r.rowCount) throw notFound('Region');
+  await audit(c, staff.id, 'region.status', 'region', id, null, { status });
+}
+
+// ---------------- Skills, categories, services and their intake fields ----------------
+
+export const SkillInput = z.object({
+  code: z.string().regex(/^[a-z][a-z0-9_]{1,40}$/), name_en: z.string().trim().min(2).max(80), name_ur: z.string().trim().min(2).max(80),
+  restricted: z.boolean(),
+}).strict();
+
+export async function listSkills(db: Db) { return many(db, 'SELECT code, name_en, name_ur, restricted FROM skills ORDER BY code'); }
+
+export async function upsertSkill(c: PoolClient, staff: AuthUser, input: z.infer<typeof SkillInput>) {
+  await c.query(`INSERT INTO skills (code, name_en, name_ur, restricted) VALUES ($1,$2,$3,$4)
+                 ON CONFLICT (code) DO UPDATE SET name_en = EXCLUDED.name_en, name_ur = EXCLUDED.name_ur, restricted = EXCLUDED.restricted`,
+    [input.code, input.name_en, input.name_ur, input.restricted]);
+  await audit(c, staff.id, 'skill.upsert', 'skill', input.code, null, input);
+}
+
+export const NewCategoryInput = z.object({
+  code: z.string().regex(/^[a-z][a-z0-9_]{1,40}$/), name_en: z.string().trim().min(2).max(120), name_ur: z.string().trim().min(2).max(120),
+}).strict();
+
+export async function createCategory(c: PoolClient, staff: AuthUser, input: z.infer<typeof NewCategoryInput>) {
+  if (await one(c, 'SELECT 1 FROM categories WHERE code = $1', [input.code])) throw conflict('CATEGORY_EXISTS', 'That code is already used.');
+  const r = await one<{ id: string }>(c,
+    `INSERT INTO categories (id, code, name_en, name_ur, status, display_order)
+     VALUES (gen_random_uuid(), $1,$2,$3,'draft', (SELECT coalesce(max(display_order), 0) + 10 FROM categories)) RETURNING id`,
+    [input.code, input.name_en, input.name_ur]);
+  await audit(c, staff.id, 'category.create', 'category', r!.id, null, input);
+  return { id: r!.id, status: 'draft' };
+}
+
+export const JobSettingsInput = z.object({
+  name_en: z.string().trim().min(2).max(120).optional(), name_ur: z.string().trim().min(2).max(120).optional(),
+  description_en: z.string().max(1000).optional(), description_ur: z.string().max(1000).optional(),
+  booking_modes: z.array(z.enum(['fixed', 'quote', 'inspection'])).min(1).optional(),
+  required_skill: z.string().optional(),
+  duration_minutes: z.number().int().positive().max(1440).optional(),
+  duration_field_key: z.string().nullable().optional(),
+  needs_destination: z.boolean().optional(),
+  requires_authorization_check: z.boolean().optional(),
+  visit_charge_paisa: z.number().int().nonnegative().max(10_000_00).optional(),
+}).strict();
+
+/** Every setting a customer sees comes from here, so services change without an app release. */
+export async function updateJobSettings(c: PoolClient, staff: AuthUser, id: string, input: z.infer<typeof JobSettingsInput>) {
+  if (input.required_skill && !(await one(c, 'SELECT 1 FROM skills WHERE code = $1', [input.required_skill]))) throw unprocessable('UNKNOWN_SKILL', 'Unknown skill.');
+  if (input.duration_field_key) {
+    const f = await one(c, `SELECT 1 FROM job_intake_fields WHERE job_id = $1 AND key = $2 AND field_type = 'hours'`, [id, input.duration_field_key]);
+    if (!f) throw unprocessable('BAD_DURATION_FIELD', 'The duration field must be an "hours" field of this service.');
+  }
+  const cols = ['name_en', 'name_ur', 'description_en', 'description_ur', 'booking_modes', 'required_skill', 'duration_minutes',
+    'duration_field_key', 'needs_destination', 'requires_authorization_check', 'visit_charge_paisa'] as const;
+  const sets: string[] = []; const params: unknown[] = [id];
+  for (const col of cols) if (input[col] !== undefined) { params.push(input[col]); sets.push(`${col} = $${params.length}`); }
+  if (!sets.length) return;
+  const r = await c.query(`UPDATE jobs SET ${sets.join(', ')}, updated_at = now() WHERE id = $1`, params);
+  if (!r.rowCount) throw notFound('Service');
+  await audit(c, staff.id, 'job.settings', 'job', id, null, input);
+}
+
+export const IntakeFieldInput = z.object({
+  key: z.string().regex(/^[a-z][a-z0-9_]{0,40}$/),
+  field_type: z.enum(['integer', 'text', 'select', 'boolean', 'hours']),
+  label_en: z.string().trim().min(2).max(120), label_ur: z.string().trim().min(2).max(120),
+  required: z.boolean().default(false),
+  options: z.array(z.object({ value: z.string().min(1).max(40), label_en: z.string().min(1).max(80), label_ur: z.string().min(1).max(80) })).optional(),
+  min_value: z.number().optional(), max_value: z.number().optional(),
+  display_order: z.number().int().optional(),
+}).strict().refine((f) => f.field_type !== 'select' || (f.options?.length ?? 0) >= 2, 'A choice field needs at least two options');
+
+export async function upsertIntakeField(c: PoolClient, staff: AuthUser, jobId: string, f: z.infer<typeof IntakeFieldInput>) {
+  if (!(await one(c, 'SELECT 1 FROM jobs WHERE id = $1', [jobId]))) throw notFound('Service');
+  await c.query(`INSERT INTO job_intake_fields (job_id, key, field_type, label_en, label_ur, required, options, min_value, max_value, display_order)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, coalesce($10, (SELECT coalesce(max(display_order), 0) + 10 FROM job_intake_fields WHERE job_id = $1)))
+                 ON CONFLICT (job_id, key) DO UPDATE SET field_type = EXCLUDED.field_type, label_en = EXCLUDED.label_en, label_ur = EXCLUDED.label_ur,
+                   required = EXCLUDED.required, options = EXCLUDED.options, min_value = EXCLUDED.min_value, max_value = EXCLUDED.max_value,
+                   display_order = EXCLUDED.display_order`,
+    [jobId, f.key, f.field_type, f.label_en, f.label_ur, f.required, f.options ? JSON.stringify(f.options) : null, f.min_value ?? null, f.max_value ?? null, f.display_order ?? null]);
+  await c.query('UPDATE jobs SET updated_at = now() WHERE id = $1', [jobId]);
+  await audit(c, staff.id, 'job.field.upsert', 'job', jobId, null, f);
+}
+
+export async function removeIntakeField(c: PoolClient, staff: AuthUser, jobId: string, key: string) {
+  const used = await one(c, 'SELECT 1 FROM jobs WHERE id = $1 AND duration_field_key = $2', [jobId, key]);
+  if (used) throw conflict('FIELD_IN_USE', 'This field sets the booking duration; change the duration setting first.');
+  const r = await c.query('DELETE FROM job_intake_fields WHERE job_id = $1 AND key = $2', [jobId, key]);
+  if (!r.rowCount) throw notFound('Field');
+  await audit(c, staff.id, 'job.field.remove', 'job', jobId, null, { key });
 }

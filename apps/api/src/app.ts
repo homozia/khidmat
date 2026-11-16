@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest, type FastifyServerOptions } from 'fastify';
 import { z, ZodError } from 'zod';
 import { config } from './config.ts';
@@ -7,8 +8,8 @@ import { authenticate, isStaff, logout, requestOtp, verifyOtp, type AuthUser, ty
 import { resolveCoverage } from './services/coverage.ts';
 import { catalogueForZone, createJob, NewJobInput, searchPlaces, setJobStatus, setJobZone } from './services/catalogue.ts';
 import {
-  cancelBooking, completeBooking, confirmPayment, createBooking, CreateBookingInput, decideQuote, getBooking,
-  providerSetStatus, QuoteInput, sendQuote,
+  cancelBooking, completeBooking, confirmPayment, createBooking, CreateBookingInput, previewBooking, decideQuote, getBooking,
+  providerSetStatus, QuoteInput, sendQuote, AuthorizationCheckInput, recordAuthorizationCheck,
 } from './services/bookings.ts';
 import { confirmLocation, dispatchQueue, eligibleProviders, listOffers, offerBooking, respondToOffer } from './services/dispatch.ts';
 import { closeWeek, ledgerFor, providerBalance, receipt, recordSettlement, refund, statementsFor } from './services/finance.ts';
@@ -41,16 +42,21 @@ export function loggerOptions(opts: BuildOptions): FastifyServerOptions['logger'
 }
 
 export async function buildApp(opts: BuildOptions = {}): Promise<FastifyInstance> {
-  const options: FastifyServerOptions = { logger: loggerOptions(opts), bodyLimit: 256 * 1024, trustProxy: true };
+  const options: FastifyServerOptions = {
+    logger: loggerOptions(opts), bodyLimit: 256 * 1024, trustProxy: true,
+    // Every response carries a request id that testers can quote in defect reports; logs carry the same id.
+    genReqId: () => `req-${randomUUID().slice(0, 13)}`,
+  };
   const app = Fastify(options);
 
   await app.register(cors, {
     origin: config.CORS_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean),
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     allowedHeaders: ['authorization', 'content-type', 'idempotency-key'],
+    exposedHeaders: ['x-request-id'],
   });
-  app.addHook('onSend', async (_req, reply) => {
-    reply.header('x-content-type-options', 'nosniff').header('referrer-policy', 'no-referrer');
+  app.addHook('onSend', async (req, reply) => {
+    reply.header('x-request-id', req.id).header('x-content-type-options', 'nosniff').header('referrer-policy', 'no-referrer');
   });
 
   app.decorateRequest('user', null);
@@ -60,7 +66,7 @@ export async function buildApp(opts: BuildOptions = {}): Promise<FastifyInstance
   });
 
   app.setErrorHandler((err, req, reply) => {
-    if (err instanceof AppError) return reply.status(err.status).send({ error: { code: err.code, message: err.message, details: err.details } });
+    if (err instanceof AppError) return reply.status(err.status).send({ error: { code: err.code, message: err.message, details: err.details, request_id: req.id } });
     if (err instanceof ZodError) {
       return reply.status(400).send({ error: { code: 'VALIDATION', message: 'Invalid request', details: z.flattenError(err).fieldErrors } });
     }
@@ -69,7 +75,7 @@ export async function buildApp(opts: BuildOptions = {}): Promise<FastifyInstance
     const e = err as { statusCode?: number; message?: string };
     if (e.statusCode && e.statusCode < 500) return reply.status(e.statusCode).send({ error: { code: 'BAD_REQUEST', message: e.message } });
     req.log.error({ err: { message: e.message, code: pgCode } }, 'unhandled error');
-    return reply.status(500).send({ error: { code: 'INTERNAL', message: 'Something went wrong. Please try again.' } });
+    return reply.status(500).send({ error: { code: 'INTERNAL', message: 'Something went wrong. Please try again.', request_id: req.id } });
   });
 
   const need = (req: FastifyRequest, ...roles: Role[]): AuthUser => {
@@ -127,19 +133,10 @@ export async function buildApp(opts: BuildOptions = {}): Promise<FastifyInstance
     return send(reply, await idempotent(u.id, 'POST /v1/bookings', idemKey(req), req.body,
       async (c) => ({ status: 201, body: await createBooking(c, u, input) })));
   });
-  /** Price and terms the customer will see before confirming. Runs the real booking rules, then rolls back. */
+  /** Price and terms the customer will see before confirming, with the token that confirms them. Saves nothing. */
   app.post('/v1/bookings/preview', async (req) => {
     const u = need(req, 'customer');
-    const input = CreateBookingInput.parse(req.body);
-    const c = await pool.connect();
-    try {
-      await c.query('BEGIN');
-      const b = await createBooking(c, u, input) as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
-      return { booking_mode: b.booking_mode, lines: b.quotes[0]?.lines ?? [], totals: b.totals, needs_location_confirmation: b.needs_location_confirmation };
-    } finally {
-      await c.query('ROLLBACK');
-      c.release();
-    }
+    return previewBooking(pool, u, CreateBookingInput.parse(req.body));
   });
   app.get('/v1/bookings', async (req) => {
     const u = need(req);
@@ -188,6 +185,11 @@ export async function buildApp(opts: BuildOptions = {}): Promise<FastifyInstance
     const { to } = z.object({ to: z.enum(['en_route', 'on_site', 'in_progress']) }).parse(req.body);
     await tx((c) => providerSetStatus(c, u, Uuid.parse(req.params).id, to));
     return { ok: true };
+  });
+  app.post('/v1/provider/bookings/:id/authorization-check', async (req) => {
+    const u = need(req, 'provider');
+    const input = AuthorizationCheckInput.parse(req.body);
+    return tx((c) => recordAuthorizationCheck(c, u, Uuid.parse(req.params).id, input));
   });
   app.post('/v1/provider/bookings/:id/quotes', async (req, reply) => {
     const u = need(req, 'provider');

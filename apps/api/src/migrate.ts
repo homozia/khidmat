@@ -57,5 +57,10 @@ export async function resetSchema(pool: pg.Pool, appEnv: string): Promise<void> 
   if (appEnv !== 'development' && appEnv !== 'test') {
     throw new Error(`Refusing to reset the database when APP_ENV=${appEnv}`);
   }
+  // Only disposable databases: the name must end in _dev, _test or _sandbox.
+  const { rows } = await pool.query<{ db: string }>('SELECT current_database() AS db');
+  if (!/_(dev|test|sandbox)$/.test(rows[0]!.db)) {
+    throw new Error(`Refusing to reset "${rows[0]!.db}": only databases named *_dev, *_test or *_sandbox can be reset`);
+  }
   await pool.query('DROP SCHEMA IF EXISTS app CASCADE');
 }

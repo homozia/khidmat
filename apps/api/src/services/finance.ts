@@ -128,18 +128,48 @@ export async function receipt(db: Db, user: AuthUser, bookingId: string) {
   if (!isCustomer && !isProvider && !staff) throw notFound('Booking');
   if (b.status !== 'completed' && b.status !== 'closed') throw conflict('NO_RECEIPT_YET', 'The receipt is available after completion.');
   const t = await bookingTotals(db, bookingId, b.commission_rate_bps);
+  const refunds = await many<{ id: string; charge_type: string; amount_paisa: number; status: string; paid_method: string | null; paid_at: Date | null; created_at: Date }>(db,
+    `SELECT id, charge_type, amount_paisa, status, paid_method, paid_at, created_at FROM refunds WHERE booking_id = $1 ORDER BY created_at`, [bookingId]);
+  const refundOwed = refunds.filter((r) => r.status === 'recorded').reduce((s, r) => s + r.amount_paisa, 0);
+  const paymentLabel: Record<string, string> = {
+    provider_reported: 'Provider reported cash received; waiting for the customer to confirm',
+    customer_confirmed: 'Cash payment confirmed by the customer',
+    auto_confirmed: 'Closed automatically 72 hours after completion',
+  };
+  const outstanding: string[] = [];
+  if (b.payment_status === 'provider_reported') outstanding.push('Customer to confirm the cash payment');
+  if (refundOwed > 0) outstanding.push(`Refund of PKR ${refundOwed / 100} to be paid to the customer`);
   const view: Record<string, unknown> = {
     ref: b.ref, job: { name_en: b.job_name_en, name_ur: b.job_name_ur }, completed_at: b.completed_at,
     labour_paisa: t.byGroup.labour, materials_paisa: t.byGroup.materials, visit_travel_paisa: t.byGroup.visit_travel,
     reimbursements_paisa: t.byGroup.reimbursements, total_paisa: t.customerTotalPaisa,
-    paid_cash_paisa: b.collected, payment_status: b.payment_status, refunded_paisa: t.refundedPaisa,
+    paid_cash_paisa: b.collected, payment_status: b.payment_status, payment_status_text: b.payment_status ? paymentLabel[b.payment_status] : null,
+    refunds, refunded_paisa: t.refundedPaisa, refund_owed_paisa: refundOwed,
     net_paid_paisa: t.customerTotalPaisa - t.refundedPaisa,
+    outstanding,
   };
   if (isProvider || staff) {
+    const gross = t.customerTotalPaisa - t.refundedPaisa;
     view.provider = {
-      commission_rate_bps: b.commission_rate_bps, commissionable_paisa: t.retainedCommissionablePaisa, fee_paisa: t.feePaisa,
-      net_earnings_paisa: t.customerTotalPaisa - t.refundedPaisa - t.feePaisa,
+      commission_rate_bps: b.commission_rate_bps,
+      gross_paisa: gross,                                   // what the customer pays, after refunds
+      commissionable_paisa: t.retainedCommissionablePaisa,  // labour the fee is charged on
+      excluded_paisa: gross - t.retainedCommissionablePaisa, // materials, travel, tolls and parking: no fee
+      fee_paisa: t.feePaisa,
+      net_earnings_paisa: gross - t.feePaisa,
     };
   }
   return view;
+}
+
+/** Finance marks a recorded refund as paid out, with how it was paid and a reference. */
+export async function markRefundPaid(c: PoolClient, staff: AuthUser, refundId: string, input: { method: string; reference: string }) {
+  const r = await one<{ booking_id: string; status: string }>(c, 'SELECT booking_id, status FROM refunds WHERE id = $1 FOR UPDATE', [refundId]);
+  if (!r) throw notFound('Refund');
+  if (r.status === 'paid') throw conflict('REFUND_ALREADY_PAID', 'This refund is already marked as paid.');
+  await c.query(`UPDATE refunds SET status = 'paid', paid_at = now(), paid_method = $2, paid_reference = $3, paid_by = $4 WHERE id = $1`,
+    [refundId, input.method, input.reference, staff.id]);
+  await audit(c, staff.id, 'refund.paid', 'refund', refundId, input.reference, input);
+  await c.query(`INSERT INTO booking_events (booking_id, actor_user_id, event_type, data) VALUES ($1,$2,'refund_paid',$3)`,
+    [r.booking_id, staff.id, JSON.stringify({ refund_id: refundId, method: input.method })]);
 }

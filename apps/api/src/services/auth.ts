@@ -4,7 +4,7 @@ import { config } from '../config.ts';
 import { pool, one, many, tx } from '../db.ts';
 import { AppError } from '../lib/errors.ts';
 import { normalizePkMobile } from '../lib/phone.ts';
-import { sendOtpSms } from './sms.ts';
+import { sendOtpSms, usesSandbox } from './sms.ts';
 
 export type Role = 'customer' | 'provider' | 'dispatcher' | 'finance' | 'config_admin' | 'verification' | 'super_admin';
 
@@ -34,7 +34,10 @@ export async function requestOtp(rawPhone: string): Promise<{ expiresInSeconds: 
   if ((recent?.n ?? 0) >= MAX_OTP_PER_WINDOW) {
     throw new AppError(429, 'OTP_RATE_LIMITED', `Too many codes requested. Try again in ${OTP_WINDOW_MIN} minutes.`);
   }
-  const code = config.SMS_PROVIDER === 'sandbox' ? config.SANDBOX_OTP_CODE : String(randomInt(0, 1_000_000)).padStart(6, '0');
+  const code = usesSandbox(phone) ? config.SANDBOX_OTP_CODE : String(randomInt(0, 1_000_000)).padStart(6, '0');
+  if (config.APP_ENV === 'staging' && config.SMS_PROVIDER === 'sandbox' && !usesSandbox(phone)) {
+    throw new AppError(403, 'TEST_NUMBERS_ONLY', 'This test server only signs in listed test numbers.');
+  }
   await pool.query(`INSERT INTO otp_challenges (phone_e164, code_hash, expires_at) VALUES ($1, $2, now() + make_interval(secs => $3))`,
     [phone, sha256(`${phone}:${code}`), OTP_TTL_MS / 1000]);
   await sendOtpSms(phone, code);

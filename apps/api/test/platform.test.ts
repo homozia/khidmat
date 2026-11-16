@@ -106,8 +106,9 @@ describe('booking preview shows the price without creating a booking', () => {
     const cust = await login(app, '+923001110001');
     const r = await cust.post('/v1/bookings/preview', { ...booking(), job_id: JOB('plumbing.tap_leak'), intake: { taps: 3 } });
     expect(r.status).toBe(200);
-    expect(r.body.totals.customer_total_paisa).toBe(800_00 + 2 * 400_00);
-    expect(r.body.lines.map((l: { amount_paisa: number }) => l.amount_paisa)).toEqual([800_00, 800_00]);
+    expect(r.body.terms.total_paisa).toBe(800_00 + 2 * 400_00);
+    expect(typeof r.body.price_token).toBe('string');
+    expect(r.body.terms.price_lines.map((l: { amount_paisa: number }) => l.amount_paisa)).toEqual([800_00, 800_00]);
     expect((await pool.query('SELECT count(*)::int AS n FROM app.bookings')).rows[0].n).toBe(0);
     const bad = await cust.post('/v1/bookings/preview', { ...booking(), intake: { nope: 1 } });
     expect(bad.body.error.code).toBe('INVALID_INTAKE');

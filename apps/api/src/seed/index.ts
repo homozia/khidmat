@@ -88,7 +88,7 @@ export async function seed(client: pg.PoolClient): Promise<void> {
       [ids.region(code), parent ? ids.region(parent) : null, level, code, en, ur, p?.lat ?? null, p?.lng ?? null, p ? box(p) : null]);
     const aliases: [string, string][] = [[en, 'en'], [ur, 'ur'], ...(p?.roman ?? []).map((r) => [r, 'roman'] as [string, string])];
     for (const [alias, lang] of aliases) {
-      await q(`INSERT INTO place_aliases (region_id, alias, lang, normalized) VALUES ($1,$2,$3,$4)`,
+      await q(`INSERT INTO place_aliases (region_id, alias, lang, normalized) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING`,
         [ids.region(code), alias, lang, normalizeAlias(alias)]);
     }
   };
@@ -126,6 +126,8 @@ export async function seed(client: pg.PoolClient): Promise<void> {
                                  duration_minutes, needs_destination)
                VALUES ($1,$2,$3,$4,$5,$6,'active',$7,$8,$9,$10)`,
         [jobId, ids.category(cat.code), job.code, job.en, job.ur, jobOrder, job.modes, cat.skill.code, job.duration ?? 90, job.destination ?? false]);
+      if (job.fields?.some((f) => f.type === 'hours')) await q(`UPDATE jobs SET duration_field_key = 'hours' WHERE id = $1`, [jobId]);
+      if (job.code === 'locksmith.lockout') await q(`UPDATE jobs SET requires_authorization_check = true, visit_charge_paisa = 50000 WHERE id = $1`, [jobId]);
       let fieldOrder = 0;
       for (const f of job.fields ?? []) {
         fieldOrder += 10;

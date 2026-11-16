@@ -22,7 +22,7 @@ export interface EligibleProvider {
 export async function eligibleProviders(db: Db, bookingId: string): Promise<EligibleProvider[]> {
   const rows = await many<EligibleProvider & { daily_job_cap: number }>(db,
     `WITH b AS (
-       SELECT bk.id, bk.zone_id, bk.location, bk.scheduled_start, j.required_skill, j.duration_minutes,
+       SELECT bk.id, bk.zone_id, bk.location, bk.scheduled_start, j.required_skill, bk.duration_minutes,
               (bk.terms_snapshot->>'destination_zone_id')::uuid AS dest_zone_id
        FROM bookings bk JOIN jobs j ON j.id = bk.job_id WHERE bk.id = $1
      ), bal AS (
@@ -47,16 +47,43 @@ export async function eligibleProviders(db: Db, bookingId: string): Promise<Elig
        AND EXISTS (SELECT 1 FROM provider_zones pz WHERE pz.provider_id = p.id AND pz.zone_id = b.zone_id)
        AND (b.dest_zone_id IS NULL OR EXISTS (SELECT 1 FROM provider_zones pz WHERE pz.provider_id = p.id AND pz.zone_id = b.dest_zone_id))
        AND NOT EXISTS (
-         SELECT 1 FROM bookings x JOIN jobs xj ON xj.id = x.job_id
+         SELECT 1 FROM bookings x
          WHERE x.assigned_provider_id = p.id AND x.id <> b.id
            AND x.status IN ('assigned', 'en_route', 'on_site', 'awaiting_approval', 'in_progress')
-           AND tstzrange(x.scheduled_start, x.scheduled_start + make_interval(mins => xj.duration_minutes))
+           AND tstzrange(x.scheduled_start, x.scheduled_start + make_interval(mins => x.duration_minutes))
                && tstzrange(b.scheduled_start, b.scheduled_start + make_interval(mins => b.duration_minutes)))
        AND coalesce(bal.balance, 0) <= $2
        AND coalesce(bal.overdue, 0) <= 0
      ORDER BY distance_m ASC NULLS LAST, jobs_today ASC, p.rating_avg DESC NULLS LAST, p.id
     `, [bookingId, config.OVERDUE_BALANCE_LIMIT_PAISA, config.OVERDUE_DAYS]);
   return rows.filter((r) => r.jobs_today < r.daily_job_cap).map(({ daily_job_cap: _cap, ...r }) => r);
+}
+
+/** Plain-language reason a provider cannot take a booking, checked in the same order as eligibility. */
+export async function whyIneligible(db: Db, providerId: string, bookingId: string): Promise<string> {
+  const r = await one<Record<string, boolean>>(db,
+    `WITH b AS (SELECT bk.*, j.required_skill, (bk.terms_snapshot->>'destination_zone_id')::uuid AS dest FROM bookings bk JOIN jobs j ON j.id = bk.job_id WHERE bk.id = $2)
+     SELECT p.status = 'approved' AND u.status = 'active' AS approved,
+            p.accepting_offers AS available,
+            EXISTS (SELECT 1 FROM provider_skills s WHERE s.provider_id = p.id AND s.skill_code = b.required_skill AND s.status = 'approved') AS skill,
+            EXISTS (SELECT 1 FROM provider_skills s WHERE s.provider_id = p.id AND s.skill_code = b.required_skill AND s.status = 'approved'
+                    AND (s.expires_at IS NULL OR s.expires_at > b.scheduled_start)) AS licence_valid,
+            EXISTS (SELECT 1 FROM provider_zones z WHERE z.provider_id = p.id AND z.zone_id = b.zone_id) AS covers_pickup,
+            (b.dest IS NULL OR EXISTS (SELECT 1 FROM provider_zones z WHERE z.provider_id = p.id AND z.zone_id = b.dest)) AS covers_destination,
+            NOT EXISTS (SELECT 1 FROM bookings x WHERE x.assigned_provider_id = p.id AND x.id <> b.id
+              AND x.status IN ('assigned', 'en_route', 'on_site', 'awaiting_approval', 'in_progress')
+              AND tstzrange(x.scheduled_start, x.scheduled_start + make_interval(mins => x.duration_minutes))
+                  && tstzrange(b.scheduled_start, b.scheduled_start + make_interval(mins => b.duration_minutes))) AS free
+     FROM providers p JOIN users u ON u.id = p.user_id, b WHERE p.id = $1`, [providerId, bookingId]);
+  if (!r) return 'Provider not found.';
+  if (!r.approved) return 'The provider is not approved or is suspended.';
+  if (!r.available) return 'The provider has switched off "Accepting jobs".';
+  if (!r.skill) return 'The provider does not have an approved skill for this job.';
+  if (!r.licence_valid) return 'The provider\'s licence or certificate expires before this booking.';
+  if (!r.covers_pickup) return 'The provider does not cover this area.';
+  if (!r.covers_destination) return 'The provider does not cover the trip destination.';
+  if (!r.free) return 'The provider already has a job at this time.';
+  return 'The provider is at the daily job limit or has overdue fees to pay.';
 }
 
 export async function offerBooking(c: PoolClient, staff: AuthUser, bookingId: string, providerId: string) {
@@ -66,7 +93,7 @@ export async function offerBooking(c: PoolClient, staff: AuthUser, bookingId: st
   if (needsPin?.v) throw conflict('LOCATION_UNCONFIRMED', 'Confirm the customer location before dispatching.');
   const eligible = await eligibleProviders(c, bookingId);
   if (!eligible.some((e) => e.provider_id === providerId)) {
-    throw unprocessable('PROVIDER_NOT_ELIGIBLE', 'This provider cannot take this job (skill, zone, schedule or balance).');
+    throw unprocessable('PROVIDER_NOT_ELIGIBLE', await whyIneligible(c, providerId, bookingId));
   }
   const a = await one<{ id: string; expires_at: Date }>(c,
     `INSERT INTO assignments (booking_id, provider_id, status, offered_by, expires_at)
@@ -108,6 +135,17 @@ export async function respondToOffer(c: PoolClient, user: AuthUser, assignmentId
     return { status: 'declined' as const };
   }
   if (b.status !== 'requested') throw conflict('BOOKING_TAKEN', 'This booking is no longer available.');
+  // Serialise this provider's acceptances so two overlapping jobs cannot both be taken,
+  // then re-check everything that may have changed since the offer was sent.
+  await c.query('SELECT 1 FROM providers WHERE id = $1 FOR UPDATE', [a.provider_id]);
+  const stillEligible = (await eligibleProviders(c, b.id)).some((p) => p.provider_id === a.provider_id);
+  if (!stillEligible) {
+    const reason = await whyIneligible(c, a.provider_id, b.id);
+    await c.query(`UPDATE assignments SET status = 'withdrawn', responded_at = now() WHERE id = $1`, [assignmentId]);
+    await c.query(`INSERT INTO booking_events (booking_id, actor_user_id, event_type, data) VALUES ($1,$2,'offer_withdrawn',$3)`,
+      [b.id, user.id, JSON.stringify({ assignment_id: assignmentId, reason })]);
+    return { status: 'withdrawn' as const, reason };
+  }
   // The partial unique index assignments_one_accepted is the final guard against two acceptances.
   await c.query(`UPDATE assignments SET status = 'accepted', responded_at = now() WHERE id = $1`, [assignmentId]);
   await c.query(`UPDATE assignments SET status = 'withdrawn', responded_at = now() WHERE booking_id = $1 AND status = 'offered'`, [b.id]);
@@ -128,7 +166,7 @@ export async function confirmLocation(c: PoolClient, staff: AuthUser, bookingId:
   const b = await lockBooking(c, bookingId);
   if (b.status !== 'requested') throw conflict('NOT_DISPATCHABLE', 'Location can only be confirmed before dispatch.');
   const inZone = await one<{ ok: boolean }>(c,
-    `SELECT ST_Contains(z.boundary, ST_SetSRID(ST_MakePoint($2,$3),4326)) AS ok FROM service_zones z WHERE z.id = $1`, [b.zone_id, lng, lat]);
+    `SELECT ST_Covers(z.boundary, ST_SetSRID(ST_MakePoint($2,$3),4326)) AS ok FROM service_zones z WHERE z.id = $1`, [b.zone_id, lng, lat]);
   if (!inZone?.ok) throw unprocessable('PIN_OUTSIDE_ZONE', 'The confirmed pin is outside the booking zone; cancel and rebook.');
   await c.query(`UPDATE bookings SET location = ST_SetSRID(ST_MakePoint($2,$3),4326), location_source = 'dispatcher',
                    needs_location_confirmation = false, updated_at = now() WHERE id = $1`, [bookingId, lng, lat]);

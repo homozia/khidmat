@@ -179,7 +179,11 @@ describe('M3 - provider onboarding and verification', () => {
 
   it('a restricted skill needs an expiry date; once approved the applicant can be activated and receives lockout jobs', async () => {
     expect((await u.verifier.post(`/v1/admin/providers/${providerId}/skills/locksmith`, { decision: 'approved', check_note: 'Police certificate PC-1234 seen' })).body.error.code).toBe('EXPIRY_REQUIRED');
-    expect((await u.verifier.post(`/v1/admin/providers/${providerId}/skills/locksmith`, { decision: 'approved', check_note: 'Police certificate PC-1234 seen', expires_at: '2027-11-30' })).status).toBe(200);
+    const docs = await u.verifier.get(`/v1/admin/providers/${providerId}/documents`);
+    const evidence = docs.body[0].id;
+    expect((await u.verifier.post(`/v1/admin/providers/${providerId}/skills/locksmith`, { decision: 'approved', check_note: 'Police certificate PC-1234 seen', expires_at: '2027-11-30', evidence_document_id: evidence })).body.error.code).toBe('EVIDENCE_NOT_ACCEPTED');
+    await u.verifier.post(`/v1/admin/documents/${evidence}/review`, { status: 'accepted', note: 'Certificate PC-1234 genuine' });
+    expect((await u.verifier.post(`/v1/admin/providers/${providerId}/skills/locksmith`, { decision: 'approved', check_note: 'Police certificate PC-1234 seen', expires_at: '2027-11-30', evidence_document_id: evidence })).status).toBe(200);
     expect((await u.verifier.post(`/v1/admin/providers/${providerId}/status`, { status: 'approved', reason: 'Documents verified' })).status).toBe(200);
     const b = await u.customerIsb.post('/v1/bookings', { job_id: JOB('locksmith.lockout'), timing: 'scheduled', scheduled_start: tomorrowAt('10:00'),
       locality_id: LOCALITY.G10, address_line: 'House 3, G-10/3', intake: { occupant_confirmed: true } }, idem());
@@ -219,9 +223,11 @@ describe('M3 - dispatch operations, background jobs, reports', () => {
     const id = await bookAndAssign(u, 'customerIsb', 'locksmithPending', { job_id: JOB('locksmith.lockout'), timing: 'scheduled',
       scheduled_start: tomorrowAt('10:00'), locality_id: LOCALITY.F10, address_line: 'House 8, F-10/1', intake: { occupant_confirmed: true } });
     await u.locksmithPending.post(`/v1/provider/bookings/${id}/status`, { to: 'en_route' });
-    expect((await u.dispatcher.post(`/v1/admin/bookings/${id}/visit-charge`, { amount_paisa: 500_00, reason: 'ID could not be verified' })).body.error.code).toBe('NOT_ON_SITE');
+    expect((await u.dispatcher.post(`/v1/admin/bookings/${id}/visit-charge`, { reason: 'authorization_not_verified', note: 'ID could not be verified' })).body.error.code).toBe('NOT_ON_SITE');
     await u.locksmithPending.post(`/v1/provider/bookings/${id}/status`, { to: 'on_site' });
-    expect((await u.dispatcher.post(`/v1/admin/bookings/${id}/visit-charge`, { amount_paisa: 500_00, reason: 'ID could not be verified; did not open' })).status).toBe(200);
+    expect((await u.dispatcher.post(`/v1/admin/bookings/${id}/visit-charge`, { reason: 'authorization_not_verified', note: 'No check recorded yet' })).body.error.code).toBe('CHECK_NOT_FAILED');
+    await u.locksmithPending.post(`/v1/provider/bookings/${id}/authorization-check`, { verified: false, method: 'not_verifiable', note: 'No ID and no neighbour available' });
+    expect((await u.dispatcher.post(`/v1/admin/bookings/${id}/visit-charge`, { reason: 'authorization_not_verified', note: 'ID could not be verified; did not open' })).status).toBe(200);
     const b = await u.customerIsb.get(`/v1/bookings/${id}`);
     expect(b.body.totals.customer_total_paisa).toBe(500_00); // the PKR 1,500 lockout price is set aside
     const done = await u.locksmithPending.post(`/v1/provider/bookings/${id}/complete`, { cash_collected_paisa: 500_00 }, idem());

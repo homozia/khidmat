@@ -1,5 +1,7 @@
 import type { PoolClient } from 'pg';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
+import { config } from '../config.ts';
 import { one, many, type Db } from '../db.ts';
 import { conflict, notFound, unprocessable } from '../lib/errors.ts';
 import { canTransition, type Actor, type BookingStatus } from '../domain/states.ts';
@@ -35,6 +37,8 @@ export const CreateBookingInput = z.object({
   landmark: z.string().trim().max(200).optional(),
   destination: LatLng.extend({ text: z.string().trim().min(3).max(300) }).optional(),
   intake: z.record(z.string(), z.unknown()).default({}),
+  /** Issued by POST /v1/bookings/preview. Proves the customer saw these exact terms. */
+  price_token: z.string().max(2000).optional(),
 }).strict();
 export type CreateBookingInput = z.infer<typeof CreateBookingInput>;
 
@@ -107,7 +111,7 @@ function validateIntake(fields: { key: string; field_type: string; required: boo
       else if (f.required && v !== true) errors[f.key] = 'must be confirmed';
       else clean[f.key] = v;
     } else if (f.field_type === 'select') {
-      const opts = Array.isArray(f.options) ? f.options : [];
+      const opts = (Array.isArray(f.options) ? f.options : []).map((o: unknown) => (o && typeof o === 'object' ? (o as { value: string }).value : o));
       if (!opts.includes(v)) errors[f.key] = 'not an allowed option';
       else clean[f.key] = v;
     } else {
@@ -119,11 +123,14 @@ function validateIntake(fields: { key: string; field_type: string; required: boo
   return clean;
 }
 
-export async function createBooking(c: PoolClient, user: AuthUser, input: CreateBookingInput) {
+/** Works out everything the booking would be, without saving anything. */
+async function computeBooking(c: Db, user: AuthUser, input: CreateBookingInput) {
   const job = await one<{ id: string; code: string; name_en: string; name_ur: string; status: string; category_status: string;
-    category_code: string; booking_modes: string[]; required_skill: string; needs_destination: boolean; updated_at: Date }>(c,
+    category_code: string; booking_modes: string[]; required_skill: string; needs_destination: boolean; updated_at: Date;
+    duration_minutes: number; duration_field_key: string | null; visit_charge_paisa: number; requires_authorization_check: boolean }>(c,
     `SELECT j.id, j.code, j.name_en, j.name_ur, j.status, cat.status AS category_status, cat.code AS category_code,
-            j.booking_modes, j.required_skill, j.needs_destination, j.updated_at
+            j.booking_modes, j.required_skill, j.needs_destination, j.updated_at, j.duration_minutes, j.duration_field_key,
+            j.visit_charge_paisa, j.requires_authorization_check
      FROM jobs j JOIN categories cat ON cat.id = j.category_id WHERE j.id = $1`, [input.job_id]);
   if (!job || job.status !== 'active' || job.category_status !== 'active') throw unprocessable('JOB_UNAVAILABLE', 'This service is not available.');
   const mode = input.booking_mode ?? (job.booking_modes[0] as 'fixed' | 'quote' | 'inspection');
@@ -172,7 +179,20 @@ export async function createBooking(c: PoolClient, user: AuthUser, input: Create
   const labourType = job.category_code === 'driver' ? 'driver_hours' : 'labour';
   const lines = initialLines(mode, rule, job.name_en, labourType, intake, zone.travel_charge_paisa);
   const commission = await resolveCommissionRate(c, job.id, zone.district_region_id);
+  // Hourly jobs (e.g. driver hire) block the provider for the hours requested, not the job default.
+  const durationMinutes = job.duration_field_key && intake[job.duration_field_key] !== undefined
+    ? Math.round(Number(intake[job.duration_field_key]) * 60) : job.duration_minutes;
 
+  // The terms the customer is shown and agrees to. A change to any of these needs fresh consent.
+  const customerTerms = {
+    job_id: job.id, zone_id: zone.id, booking_mode: mode, timing: input.timing,
+    scheduled_start: input.timing === 'scheduled' ? scheduledStart.toISOString() : null,
+    intake, destination_zone_id: destinationZoneId, duration_minutes: durationMinutes,
+    price_lines: lines.map((l) => ({ charge_type: l.charge_type, description: l.description, quantity: l.quantity, unit_price_paisa: l.unit_price_paisa, amount_paisa: l.amount_paisa })),
+    total_paisa: lines.reduce((sum, l) => sum + l.amount_paisa, 0),
+    visit_charge_paisa: job.requires_authorization_check ? job.visit_charge_paisa : 0,
+    cancellation: 'Free cancellation before the provider arrives.',
+  };
   const terms = {
     job: { id: job.id, code: job.code, name_en: job.name_en, name_ur: job.name_ur, category: job.category_code, version_at: job.updated_at },
     zone: { id: zone.id, code: zone.code },
@@ -181,29 +201,83 @@ export async function createBooking(c: PoolClient, user: AuthUser, input: Create
     pricing_rule_id: rule.id,
     pricing_is_demo: rule.is_demo,
     price_lines: lines,
+    duration_minutes: durationMinutes,
+    visit_charge_paisa: customerTerms.visit_charge_paisa,
+    requires_authorization_check: job.requires_authorization_check,
     commission: { rate_bps: commission.rateBps, rule_id: commission.ruleId },
-    cancellation: 'Free cancellation before the provider arrives.',
+    cancellation: customerTerms.cancellation,
     snapshot_at: new Date().toISOString(),
   };
+  return { job, zone, coverage, mode, scheduledStart, intake, lines, commission, terms, customerTerms, durationMinutes };
+}
+
+/** Price preview: the exact terms plus a signed token the customer sends back when confirming. */
+export async function previewBooking(c: Db, user: AuthUser, input: CreateBookingInput) {
+  const r = await computeBooking(c, user, input);
+  return {
+    terms: r.customerTerms,
+    needs_location_confirmation: r.coverage.needsConfirmation,
+    location_precision: r.coverage.source === 'locality_centroid' ? 'area_centre' : input.location?.source ?? 'gps',
+    price_token: issuePriceToken(user.id, r.customerTerms),
+  };
+}
+
+export async function createBooking(c: PoolClient, user: AuthUser, input: CreateBookingInput) {
+  const r = await computeBooking(c, user, input);
+  const hash = termsHash(r.customerTerms);
+  const check = checkPriceToken(input.price_token, user.id, hash);
+  if (check !== 'ok') {
+    throw conflict(check === 'missing' ? 'PRICE_CONFIRMATION_REQUIRED' : 'PRICE_CHANGED',
+      check === 'missing' ? 'Review the price before confirming.' : 'The price or terms changed. Review the new terms and confirm again.',
+      { terms: r.customerTerms, price_token: issuePriceToken(user.id, r.customerTerms) });
+  }
+  const { job, zone, coverage, mode, scheduledStart, intake, lines, commission, terms } = r;
 
   const b = await one<{ id: string; ref: string }>(c,
     `INSERT INTO bookings (customer_id, job_id, zone_id, booking_mode, timing, scheduled_start, address_line, landmark,
        locality_region_id, location, location_source, needs_location_confirmation, destination_text, destination, intake,
-       terms_snapshot, commission_rate_bps, commission_rule_id)
+       terms_snapshot, commission_rate_bps, commission_rule_id, duration_minutes, accepted_price_hash)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, ST_SetSRID(ST_MakePoint($10,$11),4326), $12, $13, $14,
-       CASE WHEN $15::float8 IS NULL THEN NULL ELSE ST_SetSRID(ST_MakePoint($15,$16),4326) END, $17, $18, $19, $20)
+       CASE WHEN $15::float8 IS NULL THEN NULL ELSE ST_SetSRID(ST_MakePoint($15,$16),4326) END, $17, $18, $19, $20, $21, $22)
      RETURNING id, ref`,
     [user.id, job.id, zone.id, mode, input.timing, scheduledStart, input.address_line, input.landmark ?? null,
       input.locality_id ?? null, coverage.point.lng, coverage.point.lat,
       input.location ? input.location.source : coverage.source, coverage.needsConfirmation,
       input.destination?.text ?? null, input.destination?.lng ?? null, input.destination?.lat ?? null,
-      JSON.stringify(intake), JSON.stringify(terms), commission.rateBps, commission.ruleId]);
-  await event(c, b!.id, user.id, 'created', null, 'requested', { mode, zone: zone.code });
+      JSON.stringify(intake), JSON.stringify(terms), commission.rateBps, commission.ruleId, r.durationMinutes, hash]);
+  await event(c, b!.id, user.id, 'created', null, 'requested', { mode, zone: zone.code, accepted_price_hash: hash });
   if (lines.length) {
-    // The customer approves the shown price by confirming the booking.
+    // The customer approved these exact lines with the price token.
     await insertQuote(c, b!.id, 'initial', 'approved', user.id, lines, 'Price shown at booking', user.id);
   }
   return getBooking(c, user, b!.id);
+}
+
+// ---- Price consent tokens (stateless, HMAC-signed, 30 minutes) ----
+
+function canonical(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonical).join(',')}]`;
+  if (v && typeof v === 'object') return `{${Object.keys(v as object).sort().map((k) => `${JSON.stringify(k)}:${canonical((v as Record<string, unknown>)[k])}`).join(',')}}`;
+  return JSON.stringify(v ?? null);
+}
+export const termsHash = (terms: object) => createHash('sha256').update(canonical(terms)).digest('hex');
+const PRICE_TOKEN_TTL_MS = 30 * 60_000;
+
+export function issuePriceToken(userId: string, terms: object, now = Date.now()): string {
+  const body = Buffer.from(JSON.stringify({ u: userId, h: termsHash(terms), e: now + PRICE_TOKEN_TTL_MS })).toString('base64url');
+  return `${body}.${createHmac('sha256', config.QUOTE_SIGNING_SECRET).update(body).digest('base64url')}`;
+}
+
+function checkPriceToken(token: string | undefined, userId: string, hash: string): 'ok' | 'missing' | 'changed' {
+  if (!token) return 'missing';
+  const [body, sig] = token.split('.');
+  if (!body || !sig) return 'changed';
+  const expected = Buffer.from(createHmac('sha256', config.QUOTE_SIGNING_SECRET).update(body).digest('base64url'));
+  if (expected.length !== Buffer.from(sig).length || !timingSafeEqual(expected, Buffer.from(sig))) return 'changed';
+  try {
+    const t = JSON.parse(Buffer.from(body, 'base64url').toString()) as { u: string; h: string; e: number };
+    return t.u === userId && t.h === hash && t.e > Date.now() ? 'ok' : 'changed';
+  } catch { return 'changed'; }
 }
 
 async function insertQuote(c: Db, bookingId: string, kind: string, status: 'sent' | 'approved', createdBy: string,
@@ -290,8 +364,33 @@ export async function providerSetStatus(c: PoolClient, user: AuthUser, id: strin
       `SELECT count(*)::int AS n FROM quote_lines ql JOIN quotes q ON q.id = ql.quote_id
        WHERE q.booking_id = $1 AND q.status = 'approved' AND ql.charge_type = ANY($2)`, [id, WORK_CHARGE_TYPES]);
     if (!work?.n) throw conflict('APPROVAL_REQUIRED', 'The customer must approve a price for the work before it starts.');
+    // Lockouts: the provider must record a successful authorisation check before opening anything.
+    const needsCheck = (b.terms_snapshot as { requires_authorization_check?: boolean }).requires_authorization_check;
+    if (needsCheck) {
+      const chk = await one<{ verified: boolean }>(c, 'SELECT verified FROM authorization_checks WHERE booking_id = $1', [id]);
+      if (!chk) throw conflict('AUTHORIZATION_CHECK_REQUIRED', 'Record the occupant authorisation check before starting work.');
+      if (!chk.verified) throw conflict('AUTHORIZATION_NOT_VERIFIED', 'The occupant could not be verified. Do not open; call dispatch for a visit charge.');
+    }
   }
   await moveTo(c, b, to, 'provider', user.id, `status_${to}`);
+}
+
+export const AuthorizationCheckInput = z.object({
+  verified: z.boolean(),
+  method: z.enum(['photo_id_matches_address', 'utility_bill', 'tenancy_document', 'guard_or_neighbour', 'not_verifiable']),
+  note: z.string().trim().min(3).max(500),
+}).strict().refine((v) => v.verified === (v.method !== 'not_verifiable'), 'Use "not_verifiable" exactly when the check failed');
+
+/** The provider records how the occupant's right to enter was checked (lockouts). Recorded once. */
+export async function recordAuthorizationCheck(c: PoolClient, user: AuthUser, id: string, input: z.infer<typeof AuthorizationCheckInput>) {
+  const b = await lockBooking(c, id);
+  requireAssignedProvider(user, b);
+  if (b.status !== 'on_site') throw conflict('NOT_ON_SITE', 'Record the check when you are at the door.');
+  const ins = await c.query(`INSERT INTO authorization_checks (booking_id, provider_id, verified, method, note) VALUES ($1,$2,$3,$4,$5)
+                             ON CONFLICT DO NOTHING`, [id, user.providerId, input.verified, input.method, input.note]);
+  if (!ins.rowCount) throw conflict('CHECK_ALREADY_RECORDED', 'The check is already recorded for this booking.');
+  await event(c, id, user.id, input.verified ? 'authorization_verified' : 'authorization_not_verified', null, null, { method: input.method });
+  return { verified: input.verified };
 }
 
 export async function sendQuote(c: PoolClient, user: AuthUser, id: string, input: z.infer<typeof QuoteInput>) {
@@ -329,7 +428,7 @@ export async function completeBooking(c: PoolClient, user: AuthUser, id: string,
   }
   await moveTo(c, b, 'completed', 'provider', user.id, 'completed', { total_paisa: totals.customerTotalPaisa }, { completed_at: NOW });
   await c.query(`INSERT INTO payments (booking_id, method, amount_due_paisa, amount_collected_paisa, status)
-                 VALUES ($1, 'cash', $2, $3, 'cash_collected')`, [id, totals.customerTotalPaisa, cashCollectedPaisa]);
+                 VALUES ($1, 'cash', $2, $3, 'provider_reported')`, [id, totals.customerTotalPaisa, cashCollectedPaisa]);
   if (totals.feePaisa > 0) {
     // Unique source_key: a replayed or duplicated completion can never add a second fee.
     await c.query(`INSERT INTO ledger_entries (provider_id, booking_id, entry_type, amount_paisa, source_key, memo)
@@ -344,7 +443,7 @@ export async function confirmPayment(c: PoolClient, user: AuthUser, id: string) 
   const b = await lockBooking(c, id);
   if (b.customer_id !== user.id) throw notFound('Booking');
   await moveTo(c, b, 'closed', 'customer', user.id, 'payment_confirmed', {}, { closed_at: NOW });
-  await c.query(`UPDATE payments SET status = 'confirmed', confirmed_at = now(), confirmed_by = 'customer' WHERE booking_id = $1`, [id]);
+  await c.query(`UPDATE payments SET status = 'customer_confirmed', confirmed_at = now(), confirmed_by = 'customer' WHERE booking_id = $1`, [id]);
 }
 
 /** Auto-confirm cash and close bookings completed more than 72 hours ago. Run on a schedule. */
@@ -354,7 +453,7 @@ export async function autoCloseCompleted(c: PoolClient): Promise<number> {
   for (const r of rows) {
     const b = await lockBooking(c, r.id);
     await moveTo(c, b, 'closed', 'system', null, 'auto_closed', {}, { closed_at: NOW });
-    await c.query(`UPDATE payments SET status = 'confirmed', confirmed_at = now(), confirmed_by = 'auto' WHERE booking_id = $1`, [r.id]);
+    await c.query(`UPDATE payments SET status = 'auto_confirmed', confirmed_at = now(), confirmed_by = 'auto' WHERE booking_id = $1`, [r.id]);
   }
   return rows.length;
 }

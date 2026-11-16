@@ -49,12 +49,14 @@ export interface PricingRule {
 }
 
 /** Zone-specific rule beats the general rule; latest effective_from wins. */
+/** Demo prices are never used in production, even if a job is enabled in a real zone. */
 export async function resolvePricingRule(db: Db, jobId: string, zoneId: string): Promise<PricingRule | undefined> {
   return one<PricingRule>(db,
     `SELECT id, base_labour_paisa, unit_label, unit_field_key, unit_labour_paisa, included_units, inspection_fee_paisa, is_demo
      FROM pricing_rules
      WHERE job_id = $1 AND (zone_id IS NULL OR zone_id = $2)
        AND effective_from <= now() AND (effective_to IS NULL OR effective_to > now())
+       ${config.APP_ENV === 'production' ? 'AND is_demo = false' : ''}
      ORDER BY (zone_id IS NOT NULL) DESC, effective_from DESC LIMIT 1`, [jobId, zoneId]);
 }
 

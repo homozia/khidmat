@@ -10,8 +10,11 @@ export async function catalogueForZone(db: Db, zoneId: string) {
     `SELECT c.id AS cat_id, c.code AS cat_code, c.name_en AS cat_en, c.name_ur AS cat_ur,
             json_build_object('id', j.id, 'code', j.code, 'name_en', j.name_en, 'name_ur', j.name_ur,
               'booking_modes', j.booking_modes, 'same_day', a.same_day, 'scheduled', a.scheduled,
+              'needs_destination', j.needs_destination, 'requires_authorization_check', j.requires_authorization_check,
+              'visit_charge_paisa', j.visit_charge_paisa, 'duration_field_key', j.duration_field_key,
+              'description_en', j.description_en, 'description_ur', j.description_ur,
               'fields', coalesce((SELECT json_agg(json_build_object('key', f.key, 'type', f.field_type, 'label_en', f.label_en,
-                 'label_ur', f.label_ur, 'required', f.required, 'min', f.min_value, 'max', f.max_value) ORDER BY f.display_order)
+                 'label_ur', f.label_ur, 'required', f.required, 'min', f.min_value, 'max', f.max_value, 'options', f.options) ORDER BY f.display_order)
                  FROM job_intake_fields f WHERE f.job_id = j.id), '[]')) AS job
      FROM categories c JOIN jobs j ON j.category_id = c.id
      JOIN job_zone_availability a ON a.job_id = j.id AND a.zone_id = $1 AND a.status = 'enabled'

@@ -13,8 +13,24 @@ export async function freshApp(opts: BuildOptions = {}): Promise<FastifyInstance
 
 export interface Res<T = any> { status: number; body: T } // eslint-disable-line @typescript-eslint/no-explicit-any
 
+/** Price tokens issued per (session, body), so a retried request sends an identical body. */
+const priceTokens = new Map<string, string>();
+
 export function client(app: FastifyInstance, token?: string) {
   const call = async (method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', url: string, payload?: unknown, headers: Record<string, string> = {}): Promise<Res> => {
+    // Booking creation needs the price token from a preview, exactly as the app does it.
+    if (method === 'POST' && url === '/v1/bookings' && payload && typeof payload === 'object' && !('price_token' in payload) && !headers['x-test-raw']) {
+      const cacheKey = `${token}|${JSON.stringify(payload)}`;
+      let pt = priceTokens.get(cacheKey);
+      if (!pt) {
+        const prev = await call('POST', '/v1/bookings/preview', payload);
+        if (prev.status !== 200) return prev;
+        pt = prev.body.price_token as string;
+        priceTokens.set(cacheKey, pt);
+      }
+      payload = { ...(payload as object), price_token: pt };
+    }
+    delete headers['x-test-raw'];
     const res = await app.inject({
       method, url, payload: payload as object | undefined,
       headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), ...headers },

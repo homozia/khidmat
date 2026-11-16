@@ -114,7 +114,7 @@ describe('AC3 - first end-to-end plumbing booking (cash, fixed price)', () => {
     expect(c.body).toMatchObject({ labour_paisa: 800_00, materials_paisa: 450_00, visit_travel_paisa: 0, total_paisa: 1250_00, paid_cash_paisa: 1250_00 });
     expect(c.body.provider).toBeUndefined();
     const p = await u.plumberIsb.get(`/v1/bookings/${bookingId}/receipt`);
-    expect(p.body.provider).toEqual({ commission_rate_bps: 800, commissionable_paisa: 800_00, fee_paisa: 64_00, net_earnings_paisa: 1186_00 });
+    expect(p.body.provider).toEqual({ commission_rate_bps: 800, gross_paisa: 1250_00, commissionable_paisa: 800_00, excluded_paisa: 450_00, fee_paisa: 64_00, net_earnings_paisa: 1186_00 });
   });
 
   it('customer confirms cash paid and the booking closes; provider ledger shows PKR 64 owed', async () => {
